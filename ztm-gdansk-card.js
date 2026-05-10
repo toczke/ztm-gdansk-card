@@ -32,8 +32,8 @@ function minutesUntil(isoString) {
 
 function formatMins(min) {
   if (min === null) return "—";
-  if (min <= 0) return "&lt;1 min";
-  return `${min} min`;
+  if (min <= 0) return "za <1 min";
+  return `za ${min} min`;
 }
 
 function formatHHMM(isoString) {
@@ -94,6 +94,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
       refresh_interval: parseInt(get("refresh_interval").value, 10) || 30,
       filter_routes: routes.length ? routes : undefined,
       show_delays: get("show_delays").checked,
+      hide_terminus: get("hide_terminus").checked,
     };
 
     this.dispatchEvent(
@@ -165,10 +166,16 @@ class ZtmGdanskCardEditor extends HTMLElement {
             <label style="margin:0">Pokaż opóźnienia</label>
           </div>
         </div>
+        <div class="row">
+          <div class="checkbox-row">
+            <input id="hide_terminus" type="checkbox" ${c.hide_terminus !== false ? "checked" : ""} />
+            <label style="margin:0">Ukryj kursy kończące się na tym przystanku</label>
+          </div>
+        </div>
       </div>
     `;
 
-    ["stop_id", "title", "max_departures", "filter_routes", "refresh_interval", "show_delays"].forEach((id) => {
+    ["stop_id", "title", "max_departures", "filter_routes", "refresh_interval", "show_delays", "hide_terminus"].forEach((id) => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener("change", () => this._fire());
     });
@@ -206,6 +213,7 @@ class ZtmGdanskCard extends HTMLElement {
       max_departures: 10,
       refresh_interval: 30,
       show_delays: true,
+      hide_terminus: true,
     };
   }
 
@@ -216,6 +224,7 @@ class ZtmGdanskCard extends HTMLElement {
       max_departures: 10,
       refresh_interval: 30,
       show_delays: true,
+      hide_terminus: true,
       ...config,
     };
     if (changed) {
@@ -273,7 +282,11 @@ class ZtmGdanskCard extends HTMLElement {
   /* ── Data fetching ── */
 
   async _fetchDepartures() {
-    this._loading = true;
+    // Tylko pokazuj skeleton przy pierwszym ładowaniu (gdy brak danych)
+    if (this._departures.length === 0) {
+      this._loading = true;
+    }
+    
     this._error = null;
     this._render();
 
@@ -298,6 +311,15 @@ class ZtmGdanskCard extends HTMLElement {
         (d) => !d.estimatedTime || new Date(d.estimatedTime) > Date.now() - 30_000
       );
 
+      // Filtruj kursy kończące się na tym przystanku
+      if (this._config.hide_terminus && this._stopName) {
+        const stopNameNormalized = this._stopName.replace(/\s/g, '').toLowerCase();
+        deps = deps.filter(d => {
+          const headsignNormalized = d.headsign.replace(/\s/g, '').toLowerCase();
+          return headsignNormalized !== stopNameNormalized;
+        });
+      }
+
       // Route filter
       const filters = this._config.filter_routes;
       if (Array.isArray(filters) && filters.length > 0) {
@@ -312,12 +334,11 @@ class ZtmGdanskCard extends HTMLElement {
 
       this._departures = deps.slice(0, this._config.max_departures || 10);
       this._lastUpdate = new Date();
-      this._loading = false;
     } catch (e) {
       this._error = e.message;
-      this._loading = false;
     }
 
+    this._loading = false;
     this._render();
   }
 
@@ -439,6 +460,21 @@ class ZtmGdanskCard extends HTMLElement {
         color: var(--primary-text-color, #111);
       }
       .mins.imminent { color: #c2410c; }
+      .mins.realtime::after {
+        content: '';
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        background: #10b981;
+        border-radius: 50%;
+        margin-left: 4px;
+        animation: pulse 1.5s infinite;
+      }
+      @keyframes pulse {
+        0% { opacity: 0.3; }
+        50% { opacity: 1; }
+        100% { opacity: 0.3; }
+      }
       .clock {
         font-size: 11px;
         color: var(--secondary-text-color, #888);
@@ -517,6 +553,9 @@ class ZtmGdanskCard extends HTMLElement {
         const imminent = mins !== null && mins <= 2;
         const delayMin = Math.round(d.delaySeconds / 60);
         const isDelayed = c.show_delays !== false && delayMin > 1;
+        const isRealtime = d.estimatedTime && d.theoreticalTime && 
+                           new Date(d.estimatedTime).getTime() !== new Date(d.theoreticalTime).getTime();
+        
         return `
           <div class="dep-row${imminent ? " imminent" : ""}">
             <div>
@@ -524,8 +563,12 @@ class ZtmGdanskCard extends HTMLElement {
             </div>
             <div class="headsign">${d.headsign}</div>
             <div class="time-col">
-              <div class="mins${imminent ? " imminent" : ""}">${formatMins(mins)}</div>
-              <div class="clock">${formatHHMM(d.estimatedTime)}</div>
+              ${isRealtime ? `
+                <div class="mins${imminent ? " imminent" : ""} realtime">${formatMins(mins)}</div>
+                <div class="clock">${formatHHMM(d.estimatedTime)}</div>
+              ` : `
+                <div class="clock">${formatHHMM(d.theoreticalTime)}</div>
+              `}
               ${isDelayed ? `<div class="delay-badge">+${delayMin} min</div>` : ""}
             </div>
           </div>`;
@@ -571,7 +614,7 @@ window.customCards.push({
   name: "ZTM Gdańsk Timetable Card",
   description: "Tablica odjazdów ZTM Gdańsk (TRISTAR) dla wybranego przystanku",
   preview: true,
-  documentationURL: "https://github.com/YOUR_USERNAME/ztm-gdansk-card",
+  documentationURL: "https://github.com/toczke/ztm-gdansk-card",
 });
 
 console.info(

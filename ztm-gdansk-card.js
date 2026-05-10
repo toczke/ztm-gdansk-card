@@ -256,6 +256,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
     super();
     this._config = {};
     this._stops = [];
+    this._availableRoutes = [];
     this.attachShadow({ mode: "open" });
   }
 
@@ -272,6 +273,30 @@ class ZtmGdanskCardEditor extends HTMLElement {
     this._stops = await loadAllStops();
     this._stops.sort((a, b) => a.stopDesc.localeCompare(b.stopDesc, "pl"));
     this._render();
+  }
+
+  async _loadRoutesForStop(stopId) {
+    if (!stopId) {
+      this._availableRoutes = [];
+      return;
+    }
+    try {
+      const res = await fetch(`${DEPARTURES_URL}?stopId=${encodeURIComponent(stopId)}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const routes = [...new Set((data.departures || []).map(d => String(d.routeShortName || d.routeId || "")))].filter(Boolean);
+      // Sortuj: numery rosnąco, potem linie N
+      routes.sort((a, b) => {
+        const aN = a.startsWith('N') || a.startsWith('n');
+        const bN = b.startsWith('N') || b.startsWith('n');
+        if (aN && !bN) return 1;
+        if (!aN && bN) return -1;
+        return parseInt(a, 10) - parseInt(b, 10);
+      });
+      this._availableRoutes = routes;
+    } catch (_) {
+      this._availableRoutes = [];
+    }
   }
 
   _fire() {
@@ -303,6 +328,15 @@ class ZtmGdanskCardEditor extends HTMLElement {
          </select>`
       : `<input id="stop_id" type="number" value="${c.stop_id || ""}" placeholder="np. 1327" />`;
 
+    const routesHtml = this._availableRoutes.length > 0
+      ? `<div class="available-routes">
+          <span style="font-size:11px;color:var(--secondary-text-color,#888);">Dostępne linie (kliknij aby dodać):</span>
+          <div class="route-chips">
+            ${this._availableRoutes.map(r => `<span class="route-chip" style="background:${routeColor(r)}" data-route="${r}">${r}</span>`).join("")}
+          </div>
+        </div>`
+      : '';
+
     this.shadowRoot.innerHTML = `
       <style>
         * { box-sizing: border-box; }
@@ -314,17 +348,63 @@ class ZtmGdanskCardEditor extends HTMLElement {
         .hint { font-size: 11px; color: var(--secondary-text-color, #888); margin-top: 3px; }
         .checkbox-row { display: flex; align-items: center; gap: 8px; }
         .checkbox-row input { width: auto; }
+        .available-routes { margin-top: 8px; }
+        .route-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+        .route-chip { 
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          padding: 3px 8px;
+          border-radius: 4px;
+          font-size: 11px;
+          font-weight: 600;
+          color: #fff;
+          cursor: pointer;
+          transition: opacity 0.15s;
+          min-width: 32px;
+        }
+        .route-chip:hover { opacity: 0.8; }
       </style>
       <div class="form">
-        <div class="row"><label>Przystanek (stop_id)</label>${stopOpts}<div class="hint">Wyszukaj po nazwie lub ID przystanku</div></div>
-        <div class="row"><label>Tytuł karty (opcjonalnie)</label><input id="title" type="text" value="${c.title || ""}" placeholder="np. Autobusy spod domu" /></div>
-        <div class="row"><label>Liczba odjazdów</label><input id="max_departures" type="number" min="3" max="20" value="${c.max_departures ?? 10}" /></div>
-        <div class="row"><label>Filtruj linie (oddziel przecinkami)</label><input id="filter_routes" type="text" value="${(c.filter_routes || []).join(", ")}" placeholder="np. 110, 148, N8" /><div class="hint">Zostaw puste, aby wyświetlić wszystkie linie</div></div>
-        <div class="row"><label>Odświeżanie (sekundy, min. 15)</label><input id="refresh_interval" type="number" min="15" max="300" value="${c.refresh_interval ?? 30}" /></div>
-        <div class="row"><div class="checkbox-row"><input id="show_delays" type="checkbox" ${c.show_delays !== false ? "checked" : ""} /><label style="margin:0">Pokaż opóźnienia / przyspieszenia</label></div></div>
-        <div class="row"><div class="checkbox-row"><input id="hide_terminus" type="checkbox" ${c.hide_terminus !== false ? "checked" : ""} /><label style="margin:0">Ukryj kursy kończące się na tym przystanku</label></div></div>
-      </div>`;
+        <div class="row">
+          <label>Przystanek (stop_id)</label>
+          ${stopOpts}
+          <div class="hint">Wyszukaj po nazwie lub ID przystanku</div>
+        </div>
+        <div class="row">
+          <label>Tytuł karty (opcjonalnie)</label>
+          <input id="title" type="text" value="${c.title || ""}" placeholder="np. Autobusy spod domu" />
+        </div>
+        <div class="row">
+          <label>Liczba odjazdów</label>
+          <input id="max_departures" type="number" min="3" max="20" value="${c.max_departures ?? 10}" />
+        </div>
+        <div class="row">
+          <label>Filtruj linie (oddziel przecinkami)</label>
+          <input id="filter_routes" type="text" value="${(c.filter_routes || []).join(", ")}" placeholder="np. 110, 148, N8" />
+          <div class="hint">Zostaw puste, aby wyświetlić wszystkie linie</div>
+          ${routesHtml}
+        </div>
+        <div class="row">
+          <label>Odświeżanie (sekundy, min. 15)</label>
+          <input id="refresh_interval" type="number" min="15" max="300" value="${c.refresh_interval ?? 30}" />
+        </div>
+        <div class="row">
+          <div class="checkbox-row">
+            <input id="show_delays" type="checkbox" ${c.show_delays !== false ? "checked" : ""} />
+            <label style="margin:0">Pokaż opóźnienia / przyspieszenia</label>
+          </div>
+        </div>
+        <div class="row">
+          <div class="checkbox-row">
+            <input id="hide_terminus" type="checkbox" ${c.hide_terminus !== false ? "checked" : ""} />
+            <label style="margin:0">Ukryj kursy kończące się na tym przystanku</label>
+          </div>
+        </div>
+      </div>
+    `;
 
+    // Wyszukiwarka przystanków
     const searchEl = this.shadowRoot.getElementById("stop_search");
     if (searchEl) {
       searchEl.addEventListener("input", () => {
@@ -335,10 +415,40 @@ class ZtmGdanskCardEditor extends HTMLElement {
       });
     }
 
-    ["stop_id", "title", "max_departures", "filter_routes", "refresh_interval", "show_delays", "hide_terminus"].forEach(id => {
+    // Przy zmianie przystanku - pobierz dostępne linie
+    const stopSelect = this.shadowRoot.getElementById("stop_id");
+    if (stopSelect) {
+      stopSelect.addEventListener("change", () => {
+        this._loadRoutesForStop(stopSelect.value);
+        this._fire();
+      });
+    }
+
+    // Kliknięcie na chip dodaje linię do filtra
+    this.shadowRoot.querySelectorAll('.route-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const route = chip.getAttribute('data-route');
+        const filterInput = this.shadowRoot.getElementById('filter_routes');
+        if (filterInput && route) {
+          const current = filterInput.value.split(",").map(r => r.trim()).filter(Boolean);
+          if (!current.includes(route)) {
+            current.push(route);
+            filterInput.value = current.join(", ");
+            this._fire();
+          }
+        }
+      });
+    });
+
+    ["title", "max_departures", "filter_routes", "refresh_interval", "show_delays", "hide_terminus"].forEach(id => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener("change", () => this._fire());
     });
+
+    // Pobierz linie dla aktualnie wybranego przystanku
+    if (c.stop_id) {
+      this._loadRoutesForStop(c.stop_id);
+    }
   }
 }
 

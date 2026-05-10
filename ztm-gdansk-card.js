@@ -418,6 +418,16 @@ class ZtmGdanskCard extends HTMLElement {
         })
       : null;
 
+    const busStopIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M16 16.01L16.01 15.9989" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M6 16.01L6.01 15.9989" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M20 22V15V8M20 8H18L18 2H22V8H20Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M4 20V22H6V20H4Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M14 20V22H16V20H14Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M16 20H2.6C2.26863 20 2 19.7314 2 19.4V12.6C2 12.2686 2.26863 12 2.6 12H16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M14 8H6M14 2H6C3.79086 2 2 3.79086 2 6V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>`;
+
     const CSS = `
       :host { display: block; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -441,11 +451,11 @@ class ZtmGdanskCard extends HTMLElement {
         flex-shrink: 0;
         width: 28px;
         height: 28px;
+        color: #fff;
       }
-      .header-icon img {
+      .header-icon svg {
         width: 22px;
         height: 22px;
-        filter: brightness(0) invert(1);
       }
       .header-body { flex: 1; min-width: 0; }
       .header-title {
@@ -620,7 +630,6 @@ class ZtmGdanskCard extends HTMLElement {
         const showDelay = c.show_delays !== false && Math.abs(delayMin) >= 1;
         const isLate = delayMin > 0;
         const isRealtime = d.status === "REALTIME";
-        const isScheduled = d.status === "SCHEDULED";
         const isActive = isRealtime && (d.vehicleCode || d.vehicleId);
         
         let timeColHTML = '';
@@ -650,9 +659,7 @@ class ZtmGdanskCard extends HTMLElement {
       <style>${CSS}</style>
       <ha-card>
         <div class="header">
-          <span class="header-icon" aria-label="przystanek">
-            <img src="/hacsfiles/ztm-gdansk-card/bus-stop-svgrepo-com.svg" alt="ikona przystanku">
-          </span>
+          <span class="header-icon" aria-label="przystanek">${busStopIcon}</span>
           <div class="header-body">
             <div class="header-title">${title}</div>
             <div class="header-sub">Przystanek ${c.stop_id} · ZTM Gdańsk</div>

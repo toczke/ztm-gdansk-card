@@ -1,0 +1,70 @@
+# Example Lovelace dashboard configurations for ztm-gdansk-card
+# Copy any of these into your dashboard YAML or the card editor.
+
+# ── Minimal ──────────────────────────────────────────────────────────────────
+# Just the stop ID — everything else uses defaults.
+
+type: custom:ztm-gdansk-card
+stop_id: "1327"
+
+---
+
+# ── Full configuration ────────────────────────────────────────────────────────
+
+type: custom:ztm-gdansk-card
+stop_id: "1327"
+title: Autobusy spod domu
+max_departures: 10
+refresh_interval: 30
+show_delays: true
+
+---
+
+# ── With route filter ─────────────────────────────────────────────────────────
+# Only show lines 110, 148, and night line N8.
+
+type: custom:ztm-gdansk-card
+stop_id: "1327"
+title: Moje linie
+max_departures: 8
+refresh_interval: 45
+show_delays: true
+filter_routes:
+  - "110"
+  - "148"
+  - "N8"
+
+---
+
+# ── Multiple cards in a grid ──────────────────────────────────────────────────
+# Useful for monitoring several stops at once (e.g. outbound + return stop).
+
+type: grid
+columns: 2
+square: false
+cards:
+  - type: custom:ztm-gdansk-card
+    stop_id: "1327"
+    title: Kierunek centrum
+    max_departures: 6
+    refresh_interval: 30
+
+  - type: custom:ztm-gdansk-card
+    stop_id: "1328"
+    title: Kierunek powrotny
+    max_departures: 6
+    refresh_interval: 30
+
+---
+
+# ── Tram stop example (line IDs below 100) ────────────────────────────────────
+
+type: custom:ztm-gdansk-card
+stop_id: "3417"
+title: Tramwaje – Wrzeszcz
+max_departures: 8
+refresh_interval: 20
+filter_routes:
+  - "9"
+  - "12"
+  - "15"

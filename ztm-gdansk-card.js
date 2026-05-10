@@ -305,8 +305,9 @@ class ZtmGdanskCard extends HTMLElement {
       if (!res.ok) throw new Error(`HTTP ${res.status} – sprawdź stop_id`);
       const data = await res.json();
 
-      if (data.stopName) {
-        this._stopName = data.stopName;
+      // ✅ POPRAWKA: Zawsze pobieraj stopName z API
+      if (data.stopName && data.stopName.trim()) {
+        this._stopName = data.stopName.trim();
       } else if (!this._stopName) {
         this._stopName = `Przystanek ${this._config.stop_id}`;
       }
@@ -324,11 +325,15 @@ class ZtmGdanskCard extends HTMLElement {
         (d) => !d.estimatedTime || new Date(d.estimatedTime) > Date.now() - 30_000
       );
 
-      // Filtruj kursy kończące się na tym przystanku
+      // ✅ POPRAWKA: Filtruj kursy kończące się na tym przystanku
       if (this._config.hide_terminus && this._stopName) {
         const stopNameNormalized = normalizeText(this._stopName);
         deps = deps.filter(d => {
           const headsignNormalized = normalizeText(d.headsign);
+          // Pokaż szczegóły filtrowania w konsoli
+          if (headsignNormalized === stopNameNormalized) {
+            console.debug(`[ztm-gdansk-card] Ukryto kurs: "${d.headsign}" → "${d.routeId}" (kończy na tym przystanku)`);
+          }
           return headsignNormalized !== stopNameNormalized;
         });
       }
@@ -359,7 +364,11 @@ class ZtmGdanskCard extends HTMLElement {
 
   _render() {
     const c = this._config;
+    // ✅ POPRAWKA: Użyj nazwy przystanku z API jako tytułu
     const title = c.title || this._stopName || `Przystanek ${c.stop_id}`;
+    
+    console.debug(`[ztm-gdansk-card] Render - stopName: "${this._stopName}", title: "${title}"`);
+    
     const lastUpdateStr = this._lastUpdate
       ? this._lastUpdate.toLocaleTimeString("pl-PL", {
           hour: "2-digit",

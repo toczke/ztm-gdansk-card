@@ -48,6 +48,28 @@ function normalizeText(text) {
   return (text || "").replace(/\s/g, "").toLowerCase().replace(/[0-9]+$/, "");
 }
 
+/* ── Global stops cache ── */
+
+let _stopsCache = null;
+
+async function loadStopsCache() {
+  if (_stopsCache) return _stopsCache;
+  try {
+    const res = await fetch(STOPS_URL);
+    const data = await res.json();
+    const today = Object.keys(data).sort().reverse()[0];
+    _stopsCache = data[today]?.stops || [];
+    return _stopsCache;
+  } catch (_) {
+    return [];
+  }
+}
+
+function getStopName(stopId, stops) {
+  const stop = stops.find(s => String(s.stopId) === String(stopId));
+  return stop ? stop.stopDesc : null;
+}
+
 /* ── Editor ──────────────────────────────────────────────────────────────── */
 
 class ZtmGdanskCardEditor extends HTMLElement {
@@ -245,7 +267,6 @@ class ZtmGdanskCard extends HTMLElement {
     }
   }
 
-  // Home Assistant passes hass object – not needed for this card but required by the interface
   set hass(_hass) {}
 
   getCardSize() {
@@ -276,7 +297,6 @@ class ZtmGdanskCard extends HTMLElement {
     }
   }
 
-  // Tick every 10s so the "X min" countdown stays fresh without re-fetching
   _startTickTimer() {
     this._tickTimer = setInterval(() => {
       if (!this._loading && !this._error) this._render();
@@ -291,7 +311,6 @@ class ZtmGdanskCard extends HTMLElement {
   /* ── Data fetching ── */
 
   async _fetchDepartures() {
-    // Tylko pokazuj skeleton przy pierwszym ładowaniu (gdy brak danych)
     if (this._departures.length === 0) {
       this._loading = true;
     }
@@ -300,24 +319,28 @@ class ZtmGdanskCard extends HTMLElement {
     this._render();
 
     try {
+      // Pobierz nazwę przystanku z cache'a jeśli jeszcze nie mamy
+      if (!this._stopName) {
+        const stops = await loadStopsCache();
+        const name = getStopName(this._config.stop_id, stops);
+        if (name) {
+          this._stopName = name;
+        } else {
+          this._stopName = `Przystanek ${this._config.stop_id}`;
+        }
+      }
+
       const url = `${DEPARTURES_URL}?stopId=${encodeURIComponent(this._config.stop_id)}`;
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status} – sprawdź stop_id`);
       const data = await res.json();
-
-      // ✅ POPRAWKA: Zawsze pobieraj stopName z API
-      if (data.stopName && data.stopName.trim()) {
-        this._stopName = data.stopName.trim();
-      } else if (!this._stopName) {
-        this._stopName = `Przystanek ${this._config.stop_id}`;
-      }
 
       let deps = (data.departures || []).map((d) => ({
         routeId: String(d.routeId || d.routeShortName || "?"),
         headsign: d.headsign || d.tripHeadsign || "—",
         estimatedTime: d.estimatedTime || d.theoreticalTime || null,
         theoreticalTime: d.theoreticalTime || null,
-        delaySeconds: d.delay || 0,
+        delaySeconds: d.delayInSeconds || d.delay || 0,
       }));
 
       // Drop already-departed
@@ -325,15 +348,11 @@ class ZtmGdanskCard extends HTMLElement {
         (d) => !d.estimatedTime || new Date(d.estimatedTime) > Date.now() - 30_000
       );
 
-      // ✅ POPRAWKA: Filtruj kursy kończące się na tym przystanku
+      // Filtruj kursy kończące się na tym przystanku
       if (this._config.hide_terminus && this._stopName) {
         const stopNameNormalized = normalizeText(this._stopName);
         deps = deps.filter(d => {
           const headsignNormalized = normalizeText(d.headsign);
-          // Pokaż szczegóły filtrowania w konsoli
-          if (headsignNormalized === stopNameNormalized) {
-            console.debug(`[ztm-gdansk-card] Ukryto kurs: "${d.headsign}" → "${d.routeId}" (kończy na tym przystanku)`);
-          }
           return headsignNormalized !== stopNameNormalized;
         });
       }
@@ -364,11 +383,7 @@ class ZtmGdanskCard extends HTMLElement {
 
   _render() {
     const c = this._config;
-    // ✅ POPRAWKA: Użyj nazwy przystanku z API jako tytułu
     const title = c.title || this._stopName || `Przystanek ${c.stop_id}`;
-    
-    console.debug(`[ztm-gdansk-card] Render - stopName: "${this._stopName}", title: "${title}"`);
-    
     const lastUpdateStr = this._lastUpdate
       ? this._lastUpdate.toLocaleTimeString("pl-PL", {
           hour: "2-digit",

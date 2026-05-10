@@ -4,7 +4,7 @@
  *
  * Data source: TRISTAR open data by ZTM Gdańsk / Otwarty Gdańsk (CC-BY)
  *   Departures:  https://ckan2.multimediagdansk.pl/departures?stopId={id}
- *   Stops list:  https://ckan.multimediagdansk.pl/dataset/.../stops.json
+ *   Stops list:  https://ckan2.multimediagdansk.pl/dataset/.../stops.json
  */
 
 const DEPARTURES_URL = "https://ckan2.multimediagdansk.pl/departures";
@@ -33,6 +33,8 @@ function minutesUntil(isoString) {
 function formatMins(min) {
   if (min === null) return "—";
   if (min <= 0) return "za <1 min";
+  if (min === 1) return "za 1 min";
+  if (min === 2 || min === 3 || min === 4) return `za ${min} min`;
   return `za ${min} min`;
 }
 
@@ -42,6 +44,10 @@ function formatHHMM(isoString) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function normalizeText(text) {
+  return (text || "").replace(/\s/g, "").toLowerCase();
 }
 
 /* ── Editor ──────────────────────────────────────────────────────────────── */
@@ -313,9 +319,9 @@ class ZtmGdanskCard extends HTMLElement {
 
       // Filtruj kursy kończące się na tym przystanku
       if (this._config.hide_terminus && this._stopName) {
-        const stopNameNormalized = this._stopName.replace(/\s/g, '').toLowerCase();
+        const stopNameNormalized = normalizeText(this._stopName);
         deps = deps.filter(d => {
-          const headsignNormalized = d.headsign.replace(/\s/g, '').toLowerCase();
+          const headsignNormalized = normalizeText(d.headsign);
           return headsignNormalized !== stopNameNormalized;
         });
       }
@@ -346,6 +352,7 @@ class ZtmGdanskCard extends HTMLElement {
 
   _render() {
     const c = this._config;
+    // Poprawka: używaj faktycznej nazwy przystanku
     const title = c.title || this._stopName || `Przystanek ${c.stop_id}`;
     const lastUpdateStr = this._lastUpdate
       ? this._lastUpdate.toLocaleTimeString("pl-PL", {
@@ -480,6 +487,11 @@ class ZtmGdanskCard extends HTMLElement {
         color: var(--secondary-text-color, #888);
         margin-top: 1px;
       }
+      .clock-scheduled {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--primary-text-color, #111);
+      }
       .delay-badge {
         display: inline-block;
         font-size: 10px;
@@ -567,7 +579,7 @@ class ZtmGdanskCard extends HTMLElement {
                 <div class="mins${imminent ? " imminent" : ""} realtime">${formatMins(mins)}</div>
                 <div class="clock">${formatHHMM(d.estimatedTime)}</div>
               ` : `
-                <div class="clock">${formatHHMM(d.theoreticalTime)}</div>
+                <div class="clock-scheduled">${formatHHMM(d.theoreticalTime)}</div>
               `}
               ${isDelayed ? `<div class="delay-badge">+${delayMin} min</div>` : ""}
             </div>

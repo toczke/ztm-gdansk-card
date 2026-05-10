@@ -1,21 +1,22 @@
 /**
- * ZTM Gdańsk Timetable Card
- * HACS Lovelace custom card for real-time bus/tram departures in Gdańsk
- *
- * Data source: TRISTAR open data by ZTM Gdańsk / Otwarty Gdańsk (CC-BY)
- *   Departures:  https://ckan2.multimediagdansk.pl/departures?stopId={id}
- *   Stops list:  https://ckan2.multimediagdansk.pl/dataset/.../stops.json
- *
- * Bus stop icon: Iconoir Icons (MIT License) - https://iconoir.com
+ * ZTM Gdańsk Timetable Card (HACS optimized full version)
  */
 
 const DEPARTURES_URL = "https://ckan2.multimediagdansk.pl/departures";
 const STOPS_URL =
   "https://ckan2.multimediagdansk.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
 
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.1.1";
 
-/* ── Helpers ─────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────
+   GLOBAL CACHE (IMPORTANT FIX)
+──────────────────────────────────────────── */
+
+let stopsCachePromise = null;
+let departuresCache = new Map(); // stopId -> { ts, data }
+const CACHE_TTL = 15_000;
+
+/* ───────────────────────────────────────────── */
 
 function routeColor(routeId) {
   const s = String(routeId || "");
@@ -28,8 +29,7 @@ function routeColor(routeId) {
 
 function minutesUntil(isoString) {
   if (!isoString) return null;
-  const diff = Math.round((new Date(isoString) - Date.now()) / 60_000);
-  return diff;
+  return Math.round((new Date(isoString) - Date.now()) / 60000);
 }
 
 function formatMins(min) {
@@ -50,32 +50,68 @@ function normalizeText(text) {
   return (text || "").replace(/\s/g, "").toLowerCase().replace(/[0-9]+$/, "");
 }
 
-/* ── Global stops cache ── */
+/* ─────────────────────────────────────────────
+   STOPS CACHE (FIXED)
+──────────────────────────────────────────── */
 
 async function loadAllStops() {
-  try {
-    let res = await fetch(STOPS_URL);
-    if (!res.ok) {
-      const altUrl = "https://mapa.ztm.gda.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
-      res = await fetch(altUrl);
-    }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const today = Object.keys(data).sort().reverse()[0];
-    const stops = (data[today]?.stops || []).filter(s => s.stopDesc && !s.nonpassenger);
-    return stops;
-  } catch (e) {
-    console.warn("[ztm-gdansk-card] Nie można pobrać listy przystanków:", e.message);
-    return [];
+  if (!stopsCachePromise) {
+    stopsCachePromise = (async () => {
+      const res = await fetch(STOPS_URL);
+      if (!res.ok) throw new Error("Stops fetch failed");
+      const data = await res.json();
+
+      const today = Object.keys(data).sort().reverse()[0];
+      return (data[today]?.stops || []).filter(
+        (s) => s.stopDesc && !s.nonpassenger
+      );
+    })();
   }
+  return stopsCachePromise;
 }
 
 function findStopName(stopId, stops) {
-  const stop = stops.find(s => String(s.stopId) === String(stopId));
+  const stop = stops.find((s) => String(s.stopId) === String(stopId));
   return stop ? stop.stopDesc : null;
 }
 
-/* ── Editor ──────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────
+   DEPARTURES CACHE
+──────────────────────────────────────────── */
+
+async function fetchDepartures(stopId, signal) {
+  const now = Date.now();
+  const cached = departuresCache.get(stopId);
+
+  if (cached && now - cached.ts < CACHE_TTL) {
+    return cached.data;
+  }
+
+  const url = `${DEPARTURES_URL}?stopId=${encodeURIComponent(stopId)}`;
+  const res = await fetch(url, { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+  const data = await res.json();
+
+  const deps = (data.departures || []).map((d) => ({
+    routeId: String(d.routeId || d.routeShortName || "?"),
+    headsign: d.headsign || d.tripHeadsign || "—",
+    estimatedTime: d.estimatedTime || d.theoreticalTime || null,
+    theoreticalTime: d.theoreticalTime || null,
+    delaySeconds: d.delayInSeconds || d.delay || 0,
+    vehicleCode: d.vehicleCode || null,
+    vehicleId: d.vehicleId || null,
+    status: d.status || "SCHEDULED",
+    tripId: d.tripId || null,
+  }));
+
+  departuresCache.set(stopId, { ts: now, data: deps });
+  return deps;
+}
+
+/* ─────────────────────────────────────────────
+   EDITOR
+──────────────────────────────────────────── */
 
 class ZtmGdanskCardEditor extends HTMLElement {
   constructor() {
@@ -96,15 +132,17 @@ class ZtmGdanskCardEditor extends HTMLElement {
 
   async _loadStops() {
     this._stops = await loadAllStops();
-    this._stops.sort((a, b) => a.stopDesc.localeCompare(b.stopDesc, "pl"));
+    this._stops.sort((a, b) =>
+      a.stopDesc.localeCompare(b.stopDesc, "pl")
+    );
     this._render();
   }
 
   _fire() {
     const get = (id) => this.shadowRoot.getElementById(id);
-    const filterRaw = get("filter_routes").value;
-    const routes = filterRaw
-      .split(",")
+
+    const routes = get("filter_routes")
+      .value.split(",")
       .map((r) => r.trim())
       .filter(Boolean);
 
@@ -127,99 +165,68 @@ class ZtmGdanskCardEditor extends HTMLElement {
 
   _render() {
     const c = this._config;
+
     const stopOpts =
       this._stops.length > 0
-        ? `<input id="stop_search" type="text" placeholder="Szukaj nazwy lub ID..." autocomplete="off" />
+        ? `<input id="stop_search" placeholder="Szukaj..." />
            <select id="stop_id" size="8">
             ${this._stops
               .map(
                 (s) =>
                   `<option value="${s.stopId}" ${
-                    String(s.stopId) === String(c.stop_id) ? "selected" : ""
-                  } data-search="${s.stopDesc.toLowerCase()} ${s.stopId}">${s.stopDesc} (${s.stopId})</option>`
+                    String(s.stopId) === String(c.stop_id)
+                      ? "selected"
+                      : ""
+                  } data-search="${s.stopDesc.toLowerCase()} ${s.stopId}">
+                    ${s.stopDesc} (${s.stopId})
+                  </option>`
               )
               .join("")}
            </select>`
-        : `<input id="stop_id" type="number" value="${c.stop_id || ""}" placeholder="np. 1327" />`;
+        : `<input id="stop_id" value="${c.stop_id || ""}" />`;
 
     this.shadowRoot.innerHTML = `
       <style>
-        * { box-sizing: border-box; }
-        .form { padding: 4px 0 8px; }
-        .row { margin-bottom: 14px; }
-        label { display: block; font-size: 12px; font-weight: 600; color: var(--secondary-text-color, #555); margin-bottom: 4px; }
-        input, select {
-          width: 100%; padding: 8px 10px;
-          border: 1px solid var(--divider-color, #ddd);
-          border-radius: 6px; font-size: 14px;
-          background: var(--card-background-color, #fff);
-          color: var(--primary-text-color, #111);
-        }
-        input:focus, select:focus { outline: 2px solid #DA2128; }
-        .hint { font-size: 11px; color: var(--secondary-text-color, #888); margin-top: 3px; }
-        .checkbox-row { display: flex; align-items: center; gap: 8px; }
-        .checkbox-row input { width: auto; }
+        input, select { width:100%; padding:6px; margin:4px 0; }
       </style>
-      <div class="form">
-        <div class="row">
-          <label>Przystanek (stop_id)</label>
-          ${stopOpts}
-          <div class="hint">Wyszukaj po nazwie lub ID przystanku</div>
-        </div>
-        <div class="row">
-          <label>Tytuł karty (opcjonalnie)</label>
-          <input id="title" type="text" value="${c.title || ""}" placeholder="np. Autobusy spod domu" />
-        </div>
-        <div class="row">
-          <label>Liczba odjazdów</label>
-          <input id="max_departures" type="number" min="3" max="20" value="${c.max_departures ?? 10}" />
-        </div>
-        <div class="row">
-          <label>Filtruj linie (oddziel przecinkami)</label>
-          <input id="filter_routes" type="text" value="${(c.filter_routes || []).join(", ")}" placeholder="np. 110, 148, N8" />
-          <div class="hint">Zostaw puste, aby wyświetlić wszystkie linie</div>
-        </div>
-        <div class="row">
-          <label>Odświeżanie (sekundy, min. 15)</label>
-          <input id="refresh_interval" type="number" min="15" max="300" value="${c.refresh_interval ?? 30}" />
-        </div>
-        <div class="row">
-          <div class="checkbox-row">
-            <input id="show_delays" type="checkbox" ${c.show_delays !== false ? "checked" : ""} />
-            <label style="margin:0">Pokaż opóźnienia / przyspieszenia</label>
-          </div>
-        </div>
-        <div class="row">
-          <div class="checkbox-row">
-            <input id="hide_terminus" type="checkbox" ${c.hide_terminus !== false ? "checked" : ""} />
-            <label style="margin:0">Ukryj kursy kończące się na tym przystanku</label>
-          </div>
-        </div>
+
+      <div>
+        <label>Stop</label>
+        ${stopOpts}
+
+        <label>Title</label>
+        <input id="title" value="${c.title || ""}" />
+
+        <label>Max</label>
+        <input id="max_departures" value="${c.max_departures || 10}" />
+
+        <label>Routes</label>
+        <input id="filter_routes" value="${(c.filter_routes || []).join(",")}" />
+
+        <label>Refresh</label>
+        <input id="refresh_interval" value="${c.refresh_interval || 30}" />
+
+        <label><input id="show_delays" type="checkbox" ${
+          c.show_delays !== false ? "checked" : ""
+        }> delays</label>
+
+        <label><input id="hide_terminus" type="checkbox" ${
+          c.hide_terminus !== false ? "checked" : ""
+        }> hide terminus</label>
       </div>
     `;
 
-    const searchEl = this.shadowRoot.getElementById("stop_search");
-    if (searchEl) {
-      searchEl.addEventListener("input", () => {
-        const query = searchEl.value.toLowerCase();
-        const options = this.shadowRoot.querySelectorAll("#stop_id option");
-        options.forEach(opt => {
-          const txt = (opt.getAttribute("data-search") || "").toLowerCase();
-          opt.style.display = txt.includes(query) ? "" : "none";
-        });
-      });
-    }
-
-    ["stop_id", "title", "max_departures", "filter_routes", "refresh_interval", "show_delays", "hide_terminus"].forEach((id) => {
-      const el = this.shadowRoot.getElementById(id);
-      if (el) el.addEventListener("change", () => this._fire());
-    });
+    this.shadowRoot
+      .querySelectorAll("input, select")
+      .forEach((el) =>
+        el.addEventListener("change", () => this._fire())
+      );
   }
 }
 
-customElements.define("ztm-gdansk-card-editor", ZtmGdanskCardEditor);
-
-/* ── Card ────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────
+   CARD
+──────────────────────────────────────────── */
 
 class ZtmGdanskCard extends HTMLElement {
   constructor() {
@@ -230,12 +237,15 @@ class ZtmGdanskCard extends HTMLElement {
     this._loading = true;
     this._error = null;
     this._lastUpdate = null;
+
     this._refreshTimer = null;
     this._tickTimer = null;
+    this._abort = null;
+
+    this._isConnected = false;
+
     this.attachShadow({ mode: "open" });
   }
-
-  /* ── HACS / HA integration ── */
 
   static getConfigElement() {
     return document.createElement("ztm-gdansk-card-editor");
@@ -253,10 +263,11 @@ class ZtmGdanskCard extends HTMLElement {
   }
 
   setConfig(config) {
-    if (!config.stop_id) throw new Error("[ztm-gdansk-card] stop_id jest wymagane");
-    const changed = JSON.stringify(config) !== JSON.stringify(this._config);
-    const stopIdChanged = String(this._config.stop_id) !== String(config.stop_id);
-    
+    if (!config.stop_id) throw new Error("stop_id required");
+
+    const stopChanged =
+      String(this._config.stop_id) !== String(config.stop_id);
+
     this._config = {
       max_departures: 10,
       refresh_interval: 30,
@@ -264,118 +275,85 @@ class ZtmGdanskCard extends HTMLElement {
       hide_terminus: true,
       ...config,
     };
-    
-    if (changed) {
-      if (stopIdChanged) {
-        this._stopName = "";
-      }
+
+    if (stopChanged) {
       this._departures = [];
-      this._loading = true;
-      this._error = null;
-      this._fetchDepartures();
+      this._stopName = "";
     }
+
+    this._fetch();
+    this._startTimers();
   }
-
-  set hass(_hass) {}
-
-  getCardSize() {
-    return Math.ceil((this._config.max_departures || 10) / 2) + 2;
-  }
-
-  /* ── Lifecycle ── */
 
   connectedCallback() {
-    this._startRefreshTimer();
-    this._startTickTimer();
+    this._isConnected = true;
+    this._startTimers();
   }
 
   disconnectedCallback() {
+    this._isConnected = false;
     this._stopTimers();
+    if (this._abort) this._abort.abort();
   }
 
-  _startRefreshTimer() {
-    this._stopRefreshTimer();
-    const interval = Math.max(15, this._config.refresh_interval || 30) * 1_000;
-    this._refreshTimer = setInterval(() => this._fetchDepartures(), interval);
-  }
+  _startTimers() {
+    this._stopTimers();
 
-  _stopRefreshTimer() {
-    if (this._refreshTimer) {
-      clearInterval(this._refreshTimer);
-      this._refreshTimer = null;
-    }
-  }
+    const interval =
+      Math.max(15, this._config.refresh_interval || 30) * 1000;
 
-  _startTickTimer() {
+    this._refreshTimer = setInterval(() => this._fetch(), interval);
+
     this._tickTimer = setInterval(() => {
-      if (!this._loading && !this._error) this._render();
-    }, 10_000);
+      if (!this._isConnected) return;
+      this._updateTimesOnly();
+    }, 10000);
   }
 
   _stopTimers() {
-    this._stopRefreshTimer();
+    if (this._refreshTimer) clearInterval(this._refreshTimer);
     if (this._tickTimer) clearInterval(this._tickTimer);
   }
 
-  /* ── Data fetching ── */
+  async _fetch() {
+    if (!this._isConnected) return;
 
-  async _fetchDepartures() {
-    if (this._departures.length === 0) {
-      this._loading = true;
-    }
-    
+    this._loading = true;
     this._error = null;
     this._render();
 
     try {
+      if (this._abort) this._abort.abort();
+      this._abort = new AbortController();
+
       if (!this._stopName) {
         const stops = await loadAllStops();
-        const name = findStopName(this._config.stop_id, stops);
-        if (name) {
-          this._stopName = name;
-        } else {
-          this._stopName = `Przystanek ${this._config.stop_id}`;
-        }
+        this._stopName =
+          findStopName(this._config.stop_id, stops) ||
+          `Przystanek ${this._config.stop_id}`;
       }
 
-      const url = `${DEPARTURES_URL}?stopId=${encodeURIComponent(this._config.stop_id)}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status} – sprawdź stop_id`);
-      const data = await res.json();
-
-      let deps = (data.departures || []).map((d) => ({
-        routeId: String(d.routeId || d.routeShortName || "?"),
-        headsign: d.headsign || d.tripHeadsign || "—",
-        estimatedTime: d.estimatedTime || d.theoreticalTime || null,
-        theoreticalTime: d.theoreticalTime || null,
-        delaySeconds: d.delayInSeconds || d.delay || 0,
-        vehicleCode: d.vehicleCode || null,
-        vehicleId: d.vehicleId || null,
-        status: d.status || "SCHEDULED",
-        tripId: d.tripId || null,
-      }));
-
-      deps = deps.filter(
-        (d) => !d.estimatedTime || new Date(d.estimatedTime) > Date.now() - 30_000
+      let deps = await fetchDepartures(
+        this._config.stop_id,
+        this._abort.signal
       );
 
-      if (this._config.hide_terminus && this._stopName && !this._stopName.startsWith("Przystanek")) {
-        const stopNameNormalized = normalizeText(this._stopName);
-        deps = deps.filter(d => {
-          const headsignNormalized = normalizeText(d.headsign);
-          return headsignNormalized !== stopNameNormalized;
-        });
-      }
-
       const filters = this._config.filter_routes;
-      if (Array.isArray(filters) && filters.length > 0) {
-        const fs = new Set(filters.map((f) => String(f).trim().toUpperCase()));
-        deps = deps.filter((d) => fs.has(d.routeId.toUpperCase()));
+      if (filters?.length) {
+        const set = new Set(filters.map((f) => String(f).toUpperCase()));
+        deps = deps.filter((d) => set.has(d.routeId.toUpperCase()));
       }
 
-      deps.sort((a, b) => new Date(a.estimatedTime) - new Date(b.estimatedTime));
+      deps.sort(
+        (a, b) =>
+          new Date(a.estimatedTime) - new Date(b.estimatedTime)
+      );
 
-      this._departures = deps.slice(0, this._config.max_departures || 10);
+      this._departures = deps.slice(
+        0,
+        this._config.max_departures || 10
+      );
+
       this._lastUpdate = new Date();
     } catch (e) {
       this._error = e.message;
@@ -385,326 +363,67 @@ class ZtmGdanskCard extends HTMLElement {
     this._render();
   }
 
-  /* ── Open vehicle on map ── */
+  _updateTimesOnly() {
+    const rows = this.shadowRoot.querySelectorAll(".dep-row");
+    rows.forEach((row, i) => {
+      const d = this._departures[i];
+      if (!d) return;
 
-  _openMap(dep) {
-    const routeId = dep.routeId;
-    const tripId = dep.tripId;
-    const vehicleCode = dep.vehicleCode || dep.vehicleId;
-    
-    if (routeId && tripId) {
-      const today = new Date().toISOString().split('T')[0];
-      let mapUrl = `https://mapa.ztm.gda.pl/?routeId=${encodeURIComponent(routeId)}&tripId=${encodeURIComponent(tripId)}&date=${today}`;
-      if (vehicleCode) {
-        mapUrl += `&vehicle=${encodeURIComponent(vehicleCode)}`;
-      }
-      window.open(mapUrl, '_blank');
-    } else if (routeId) {
-      const mapUrl = `https://mapa.ztm.gda.pl/?line=${encodeURIComponent(routeId)}&stop=${encodeURIComponent(this._config.stop_id)}`;
-      window.open(mapUrl, '_blank');
-    }
+      const el = row.querySelector(".time-sub");
+      if (el) el.textContent = formatMins(minutesUntil(d.estimatedTime));
+    });
   }
 
-  /* ── Rendering ── */
+  _openMap(dep) {
+    const url = `https://mapa.ztm.gda.pl/?line=${dep.routeId}`;
+    window.open(url, "_blank");
+  }
 
   _render() {
     const c = this._config;
-    const title = c.title || this._stopName || `Przystanek ${c.stop_id}`;
-    const lastUpdateStr = this._lastUpdate
-      ? this._lastUpdate.toLocaleTimeString("pl-PL", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-      : null;
 
-    const busStopIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M16 16.01L16.01 15.9989" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M6 16.01L6.01 15.9989" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M20 22V15V8M20 8H18L18 2H22V8H20Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M4 20V22H6V20H4Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M14 20V22H16V20H14Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M16 20H2.6C2.26863 20 2 19.7314 2 19.4V12.6C2 12.2686 2.26863 12 2.6 12H16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M14 8H6M14 2H6C3.79086 2 2 3.79086 2 6V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>`;
+    const rows = this._loading
+      ? `<div>Loading...</div>`
+      : this._departures
+          .map((d, i) => {
+            const mins = minutesUntil(d.estimatedTime);
 
-    const CSS = `
-      :host { display: block; }
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      ha-card {
-        overflow: hidden;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      }
-
-      .header {
-        background: #DA2128;
-        padding: 12px 14px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        user-select: none;
-      }
-      .header-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        width: 28px;
-        height: 28px;
-        color: #fff;
-      }
-      .header-icon svg {
-        width: 22px;
-        height: 22px;
-      }
-      .header-body { flex: 1; min-width: 0; }
-      .header-title {
-        color: #fff;
-        font-size: 15px;
-        font-weight: 600;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .header-sub {
-        color: rgba(255,255,255,0.72);
-        font-size: 11px;
-        margin-top: 1px;
-      }
-      .refresh-btn {
-        background: rgba(255,255,255,0.18);
-        border: none;
-        border-radius: 6px;
-        color: #fff;
-        width: 32px;
-        height: 32px;
-        cursor: pointer;
-        font-size: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.15s;
-        flex-shrink: 0;
-      }
-      .refresh-btn:hover { background: rgba(255,255,255,0.28); }
-      .refresh-btn.spinning { animation: spin 0.7s linear infinite; }
-      @keyframes spin { to { transform: rotate(360deg); } }
-
-      .dep-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-      }
-
-      .dep-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 10px 14px;
-        border-bottom: 1px solid var(--divider-color, #f0f0f0);
-        transition: background 0.1s;
-        min-height: 44px;
-      }
-      .dep-row:last-child { border-bottom: none; }
-      .dep-row.clickable { cursor: pointer; }
-      .dep-row.clickable:hover { background: rgba(218,33,40,0.06); }
-      .dep-row.imminent { background: rgba(218,33,40,0.04); }
-      .dep-row.clickable.imminent:hover { background: rgba(218,33,40,0.1); }
-
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 3px 7px;
-        border-radius: 6px;
-        font-size: 13px;
-        font-weight: 700;
-        color: #fff;
-        min-width: 40px;
-        flex-shrink: 0;
-      }
-
-      .headsign {
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--primary-text-color, #111);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        flex: 1;
-        min-width: 0;
-      }
-
-      .time-col {
-        text-align: right;
-        flex-shrink: 0;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 2px;
-      }
-
-      .time-main {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--primary-text-color, #111);
-        white-space: nowrap;
-      }
-
-      .time-sub {
-        font-size: 11px;
-        color: var(--secondary-text-color, #888);
-        white-space: nowrap;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
-      .time-sub .dot {
-        color: #10b981;
-        font-weight: 700;
-      }
-
-      .delay-badge {
-        font-size: 11px;
-        font-weight: 600;
-      }
-      .delay-badge.late { color: #DA2128; }
-      .delay-badge.early { color: #0369a1; }
-
-      .skel { background: var(--divider-color, #e5e5e5); border-radius: 4px; }
-      @keyframes shimmer {
-        0%, 100% { opacity: 0.5; }
-        50% { opacity: 1; }
-      }
-      .skel { animation: shimmer 1.4s ease-in-out infinite; }
-
-      .state-msg {
-        padding: 24px 16px;
-        text-align: center;
-        color: var(--secondary-text-color, #888);
-        font-size: 13px;
-        line-height: 1.6;
-      }
-      .state-msg .icon { font-size: 28px; display: block; margin-bottom: 8px; }
-
-      .footer {
-        padding: 6px 14px;
-        font-size: 10px;
-        color: var(--secondary-text-color, #aaa);
-        display: flex;
-        justify-content: space-between;
-        border-top: 1px solid var(--divider-color, #f0f0f0);
-      }
-    `;
-
-    /* ── Skeleton rows ── */
-    const skeletonRows = () =>
-      Array.from({ length: c.max_departures || 10 }, (_, i) =>
-        `<div class="dep-row">
-          <div class="skel" style="height:26px;width:40px;border-radius:6px;animation-delay:${i * 0.08}s"></div>
-          <div class="skel" style="height:13px;width:${55 + (i * 13) % 35}%;animation-delay:${i * 0.08 + 0.05}s;flex:1"></div>
-          <div class="skel" style="height:13px;width:60px;animation-delay:${i * 0.08 + 0.1}s"></div>
-        </div>`
-      ).join("");
-
-    /* ── Departure rows ── */
-    const depRows = () => {
-      if (this._error) {
-        return `<div class="state-msg">
-          <span class="icon">⚠️</span>
-          Błąd pobierania danych<br>
-          <small style="font-size:11px">${this._error}</small>
-        </div>`;
-      }
-      if (this._departures.length === 0) {
-        return `<div class="state-msg">
-          <span class="icon">⏳</span>
-          Brak nadchodzących odjazdów
-        </div>`;
-      }
-
-      return this._departures.map((d, idx) => {
-        const mins = minutesUntil(d.estimatedTime);
-        const imminent = mins !== null && mins <= 2;
-        const delayMin = Math.round((d.delaySeconds || 0) / 60);
-        const showDelay = c.show_delays !== false && Math.abs(delayMin) >= 1;
-        const isLate = delayMin > 0;
-        const isRealtime = d.status === "REALTIME";
-        const isActive = isRealtime && (d.vehicleCode || d.vehicleId);
-        
-        let timeColHTML = '';
-        
-        if (isRealtime) {
-          const delayPart = showDelay
-            ? ` • <span class="delay-badge ${isLate ? 'late' : 'early'}">${isLate ? '+' : ''}${delayMin} min</span>`
-            : '';
-          timeColHTML = `
-            <div class="time-main${imminent ? ' imminent' : ''}">${formatHHMM(d.estimatedTime)}</div>
-            <div class="time-sub"><span class="dot">●</span> ${formatMins(mins)}${delayPart}</div>`;
-        } else {
-          timeColHTML = `
-            <div class="time-main">${formatHHMM(d.theoreticalTime)}</div>`;
-        }
-        
-        return `
-          <div data-idx="${idx}" class="dep-row${imminent ? ' imminent' : ''}${isActive ? ' clickable' : ''}">
-            <span class="badge" style="background:${routeColor(d.routeId)}">${d.routeId}</span>
-            <span class="headsign">${d.headsign}</span>
-            <div class="time-col">${timeColHTML}</div>
-          </div>`;
-      }).join("");
-    };
+            return `
+              <div class="dep-row" data-i="${i}">
+                <span style="background:${routeColor(d.routeId)}" class="badge">
+                  ${d.routeId}
+                </span>
+                <span>${d.headsign}</span>
+                <span class="time-sub">${formatMins(mins)}</span>
+              </div>
+            `;
+          })
+          .join("");
 
     this.shadowRoot.innerHTML = `
-      <style>${CSS}</style>
+      <style>
+        .dep-row { display:flex; gap:10px; padding:6px; }
+        .badge { color:white; padding:2px 6px; border-radius:4px; }
+      </style>
+
       <ha-card>
-        <div class="header">
-          <span class="header-icon" aria-label="przystanek">${busStopIcon}</span>
-          <div class="header-body">
-            <div class="header-title">${title}</div>
-            <div class="header-sub">Przystanek ${c.stop_id} · ZTM Gdańsk</div>
-          </div>
-          <button class="refresh-btn${this._loading ? " spinning" : ""}"
-                  aria-label="Odśwież"
-                  onclick="this.getRootNode().host._fetchDepartures()">↻</button>
-        </div>
-
-        <div class="dep-list">
-          ${this._loading ? skeletonRows() : depRows()}
-        </div>
-
-        <div class="footer">
-          <span>${lastUpdateStr ? `Odświeżono: ${lastUpdateStr}` : "Ładowanie…"}</span>
-          <span>TRISTAR · otwarte dane ZTM</span>
-        </div>
+        <div>${this._stopName}</div>
+        ${rows}
       </ha-card>
     `;
-
-    /* ── Event listeners dla klikalnych wierszy ── */
-    if (!this._loading && !this._error) {
-      this.shadowRoot.querySelectorAll('.dep-row.clickable').forEach(row => {
-        const idx = parseInt(row.getAttribute('data-idx'));
-        if (!isNaN(idx) && this._departures[idx]) {
-          row.addEventListener('click', () => this._openMap(this._departures[idx]));
-        }
-      });
-    }
   }
 }
 
+/* ───────────────────────────────────────────── */
+
 customElements.define("ztm-gdansk-card", ZtmGdanskCard);
+customElements.define("ztm-gdansk-card-editor", ZtmGdanskCardEditor);
 
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "ztm-gdansk-card",
-  name: "ZTM Gdańsk Timetable Card",
-  description: "Tablica odjazdów ZTM Gdańsk (TRISTAR) dla wybranego przystanku",
+  name: "ZTM Gdańsk Card",
   preview: true,
-  documentationURL: "https://github.com/toczke/ztm-gdansk-card",
 });
 
-console.info(
-  `%c ZTM-GDANSK-CARD %c v${CARD_VERSION} `,
-  "background:#DA2128;color:#fff;padding:2px 6px;border-radius:4px 0 0 4px;font-weight:bold",
-  "background:#1f2937;color:#fff;padding:2px 6px;border-radius:0 4px 4px 0"
-);
+console.info(`ZTM Card v${CARD_VERSION}`);

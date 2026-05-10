@@ -20,38 +20,15 @@ const CARD_VERSION = "1.2.0";
 function routeColor(routeId) {
   const s = String(routeId || "");
   if (!s) return "#6b7280";
-  
-  // Linie nocne (N...)
   if (/^[Nn]/.test(s)) return "#1e2a6e";
-  
   const n = parseInt(s, 10);
   if (isNaN(n)) return "#DA2128";
-  
-  // Tramwaje (1-2 cyfry, 1-99)
   if (n < 100) {
-    // Sezonowe (6x)
     if (n >= 60 && n < 70) return "#8B4513";
-    // Specjalne (9x)
     if (n >= 90 && n < 100) return "#4B0082";
-    // Zwykłe tramwaje
     return "#0369a1";
   }
-  
-  // Autobusy
   return "#DA2128";
-}
-
-function routeTypeLabel(routeId) {
-  const s = String(routeId || "");
-  if (/^[Nn]/.test(s)) return "Nocna";
-  const n = parseInt(s, 10);
-  if (isNaN(n)) return "";
-  if (n < 100) {
-    if (n >= 60 && n < 70) return "Sezonowa";
-    if (n >= 90 && n < 100) return "Specjalna";
-    return "Tramwaj";
-  }
-  return "";
 }
 
 function minutesUntil(isoString) {
@@ -160,7 +137,7 @@ const CARD_CSS = `
     padding: 10px 14px;
     border-bottom: 1px solid var(--divider-color, #f0f0f0);
     transition: background 0.1s;
-    min-height: 44px;
+    min-height: 46px;
   }
   .dep-row:last-child { border-bottom: none; }
   .dep-row.imminent { background: rgba(218,33,40,0.04); }
@@ -195,13 +172,13 @@ const CARD_CSS = `
     gap: 2px;
   }
   .time-main {
-    font-size: 14px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--primary-text-color, #111);
     white-space: nowrap;
   }
   .time-sub {
-    font-size: 11px;
+    font-size: 12px;
     color: var(--secondary-text-color, #888);
     white-space: nowrap;
     display: flex;
@@ -209,7 +186,7 @@ const CARD_CSS = `
     gap: 4px;
   }
   .time-sub .dot { color: #10b981; font-weight: 700; }
-  .delay-badge { font-size: 11px; font-weight: 600; }
+  .delay-badge { font-size: 12px; font-weight: 600; }
   .delay-badge.late { color: #DA2128; }
   .delay-badge.early { color: #0369a1; }
   .skel { background: var(--divider-color, #e5e5e5); border-radius: 4px; }
@@ -278,6 +255,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
   async _loadRoutesForStop(stopId) {
     if (!stopId) {
       this._availableRoutes = [];
+      this._render();
       return;
     }
     try {
@@ -285,7 +263,6 @@ class ZtmGdanskCardEditor extends HTMLElement {
       if (!res.ok) return;
       const data = await res.json();
       const routes = [...new Set((data.departures || []).map(d => String(d.routeShortName || d.routeId || "")))].filter(Boolean);
-      // Sortuj: numery rosnąco, potem linie N
       routes.sort((a, b) => {
         const aN = a.startsWith('N') || a.startsWith('n');
         const bN = b.startsWith('N') || b.startsWith('n');
@@ -297,6 +274,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
     } catch (_) {
       this._availableRoutes = [];
     }
+    this._render();
   }
 
   _fire() {
@@ -326,7 +304,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
          <select id="stop_id" size="8">
           ${this._stops.map(s => `<option value="${s.stopId}" ${String(s.stopId) === String(c.stop_id) ? "selected" : ""} data-search="${s.stopDesc.toLowerCase()} ${s.stopId}">${s.stopDesc} (${s.stopId})</option>`).join("")}
          </select>`
-      : `<input id="stop_id" type="number" value="${c.stop_id || ""}" placeholder="np. 1327" />`;
+      : `<input id="stop_id" type="number" value="${c.stop_id || ""}" placeholder="np. 14945" />`;
 
     const routesHtml = this._availableRoutes.length > 0
       ? `<div class="available-routes">
@@ -476,7 +454,7 @@ class ZtmGdanskCard extends HTMLElement {
   }
 
   static getConfigElement() { return document.createElement("ztm-gdansk-card-editor"); }
-  static getStubConfig() { return { type: "custom:ztm-gdansk-card", stop_id: "1327", max_departures: 10, refresh_interval: 30, show_delays: true, hide_terminus: true }; }
+  static getStubConfig() { return { type: "custom:ztm-gdansk-card", stop_id: "14945", max_departures: 10, refresh_interval: 30, show_delays: true, hide_terminus: true }; }
 
   setConfig(config) {
     if (!config.stop_id) throw new Error("[ztm-gdansk-card] stop_id jest wymagane");

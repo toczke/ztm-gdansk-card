@@ -1,8 +1,0 @@
-{
-  "domain": "ztm_gdansk_card",
-  "name": "ZTM Gdańsk Timetable Card",
-  "documentation": "https://github.com/YOUR_USERNAME/ztm-gdansk-card",
-  "issue_tracker": "https://github.com/YOUR_USERNAME/ztm-gdansk-card/issues",
-  "version": "1.0.0",
-  "filename": "ztm-gdansk-card.js"
-}

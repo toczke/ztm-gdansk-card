@@ -40,6 +40,11 @@ function minutesUntil(isoString) {
 function formatMins(min) {
   if (min === null) return "—";
   if (min <= 0) return "za <1 min";
+  if (min >= 60) {
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m > 0 ? `za ${h}h ${m}min` : `za ${h}h`;
+  }
   return `za ${min} min`;
 }
 
@@ -329,7 +334,6 @@ class ZtmGdanskCardEditor extends HTMLElement {
     }
     
     container.innerHTML = `
-      <span style="font-size:11px;color:var(--secondary-text-color,#888);">Dostępne linie (kliknij aby dodać):</span>
       <div class="route-chips">
         ${this._availableRoutes.map(r => `<span class="route-chip" style="background:${routeColor(r)}" data-route="${r}">${r}</span>`).join("")}
       </div>`;
@@ -374,8 +378,10 @@ class ZtmGdanskCardEditor extends HTMLElement {
   _render() {
     const c = this._config;
     const stopOpts = this._stops.length > 0
-      ? `<input id="stop_search" type="text" placeholder="Szukaj nazwy lub ID..." autocomplete="off" />
-         <select id="stop_id">
+      ? `<div class="search-row">
+           <input id="stop_search" type="text" placeholder="Szukaj nazwy lub ID..." autocomplete="off" />
+         </div>
+         <select id="stop_id" class="stop-select">
             <option value="">— wybierz przystanek —</option>
             ${this._stops.map(s => `<option value="${s.stopId}" ${String(s.stopId) === String(c.stop_id) ? "selected" : ""}>${s.stopDesc} (${s.stopId})</option>`).join("")}
          </select>`
@@ -385,16 +391,70 @@ class ZtmGdanskCardEditor extends HTMLElement {
       <style>
         * { box-sizing: border-box; }
         .form { padding: 4px 0 8px; }
-        .row { margin-bottom: 14px; }
-        label { display: block; font-size: 12px; font-weight: 600; color: var(--secondary-text-color, #555); margin-bottom: 4px; }
-        input, select { width: 100%; padding: 8px 10px; border: 1px solid var(--divider-color, #ddd); border-radius: 6px; font-size: 14px; background: var(--card-background-color, #fff); color: var(--primary-text-color, #111); }
+        
+        .section { margin-bottom: 16px; }
+        .section-title {
+          font-size: 11px;
+          font-weight: 700;
+          text-transform: uppercase;
+          letter-spacing: 0.08em;
+          color: var(--secondary-text-color, #888);
+          margin-bottom: 8px;
+          padding-bottom: 4px;
+          border-bottom: 1px solid var(--divider-color, #eee);
+        }
+        
+        label {
+          display: block;
+          font-size: 12px;
+          font-weight: 500;
+          color: var(--secondary-text-color, #555);
+          margin-bottom: 3px;
+        }
+        
+        input, select {
+          width: 100%;
+          padding: 8px 10px;
+          border: 1px solid var(--divider-color, #ddd);
+          border-radius: 6px;
+          font-size: 14px;
+          background: var(--card-background-color, #fff);
+          color: var(--primary-text-color, #111);
+        }
         input:focus, select:focus { outline: 2px solid #DA2128; }
-        .hint { font-size: 11px; color: var(--secondary-text-color, #888); margin-top: 3px; }
-        .checkbox-row { display: flex; align-items: center; gap: 8px; }
+        
+        .search-row { margin-bottom: 4px; }
+        .stop-select {
+          max-height: 180px;
+          overflow-y: auto;
+        }
+        
+        .hint {
+          font-size: 10px;
+          color: var(--secondary-text-color, #999);
+          margin-top: 2px;
+        }
+        
+        .inline-row {
+          display: flex;
+          gap: 12px;
+          align-items: center;
+        }
+        .inline-row > * { flex: 1; }
+        
+        .checkbox-row {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 6px;
+        }
         .checkbox-row input { width: auto; }
-        .indent { margin-left: 20px; }
+        .checkbox-row label { margin: 0; font-weight: 400; font-size: 13px; color: var(--primary-text-color, #111); }
+        
+        .indent { margin-left: 24px; margin-top: 6px; }
+        
         .available-routes { margin-top: 8px; }
-        .route-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+        .route-chips { display: flex; flex-wrap: wrap; gap: 4px; }
         .route-chip { 
           display: inline-flex;
           align-items: center;
@@ -411,46 +471,56 @@ class ZtmGdanskCardEditor extends HTMLElement {
         .route-chip:hover { opacity: 0.8; }
       </style>
       <div class="form">
-        <div class="row">
-          <label>Przystanek (stop_id)</label>
+        <div class="section">
+          <div class="section-title">📍 Przystanek</div>
           ${stopOpts}
-          <div class="hint">Wpisz nazwę lub ID aby wyszukać przystanek</div>
+          <div class="hint">Wpisz nazwę lub ID aby szybko znaleźć przystanek</div>
         </div>
-        <div class="row">
-          <label>Tytuł karty (opcjonalnie)</label>
+        
+        <div class="section">
+          <div class="section-title">✏️ Tytuł</div>
           <input id="title" type="text" value="${c.title || ""}" placeholder="np. Autobusy spod domu" />
+          <div class="hint">Opcjonalny - domyślnie nazwa przystanku</div>
         </div>
-        <div class="row">
-          <label>Liczba odjazdów</label>
-          <input id="max_departures" type="number" min="3" max="20" value="${c.max_departures ?? 10}" />
+        
+        <div class="section">
+          <div class="section-title">⚙️ Wyświetlanie</div>
+          <div class="inline-row">
+            <div>
+              <label>Liczba odjazdów</label>
+              <input id="max_departures" type="number" min="3" max="20" value="${c.max_departures ?? 10}" />
+            </div>
+            <div>
+              <label>Odświeżanie</label>
+              <input id="refresh_interval" type="number" min="15" max="300" value="${c.refresh_interval ?? 30}" />
+            </div>
+          </div>
+          <div class="hint">Odświeżanie w sekundach (min. 15s, maks. 5min)</div>
         </div>
-        <div class="row">
-          <label>Filtruj linie (oddziel przecinkami)</label>
+        
+        <div class="section">
+          <div class="section-title">🔍 Filtrowanie linii</div>
           <input id="filter_routes" type="text" value="${(c.filter_routes || []).join(", ")}" placeholder="np. 110, 148, N8" />
-          <div class="hint">Zostaw puste, aby wyświetlić wszystkie linie</div>
+          <div class="hint">Oddziel przecinkami, zostaw puste dla wszystkich linii</div>
           <div class="indent">
             <div class="checkbox-row">
               <input id="highlight_mode" type="checkbox" ${c.highlight_mode ? "checked" : ""} />
-              <label style="margin:0; font-weight:400;">Podświetlaj zamiast filtrować</label>
+              <label>Podświetlaj zamiast filtrować</label>
             </div>
-            <div class="hint">Gdy włączone: pokazuje wszystkie odjazdy, wybrane linie są wyróżnione, reszta przygaszona</div>
+            <div class="hint">Pokazuje wszystkie odjazdy, wybrane linie są wyróżnione</div>
           </div>
           <div class="available-routes"></div>
         </div>
-        <div class="row">
-          <label>Odświeżanie (sekundy, min. 15)</label>
-          <input id="refresh_interval" type="number" min="15" max="300" value="${c.refresh_interval ?? 30}" />
-        </div>
-        <div class="row">
+        
+        <div class="section">
+          <div class="section-title">🎯 Opcje</div>
           <div class="checkbox-row">
             <input id="show_delays" type="checkbox" ${c.show_delays !== false ? "checked" : ""} />
-            <label style="margin:0">Pokaż opóźnienia / przyspieszenia</label>
+            <label>Pokaż opóźnienia / przyspieszenia</label>
           </div>
-        </div>
-        <div class="row">
           <div class="checkbox-row">
             <input id="hide_terminus" type="checkbox" ${c.hide_terminus !== false ? "checked" : ""} />
-            <label style="margin:0">Ukryj kursy kończące się na tym przystanku</label>
+            <label>Ukryj kursy kończące się na tym przystanku</label>
           </div>
         </div>
       </div>
@@ -630,7 +700,6 @@ class ZtmGdanskCard extends HTMLElement {
         deps = deps.filter(d => normalizeText(d.headsign) !== sn);
       }
 
-      // Filtrowanie lub podświetlanie
       const filters = this._config.filter_routes;
       const isHighlightMode = this._config.highlight_mode;
       
@@ -638,17 +707,14 @@ class ZtmGdanskCard extends HTMLElement {
         const fs = new Set(filters.map(f => String(f).trim().toUpperCase()));
         
         if (isHighlightMode) {
-          // Podświetlanie - pokaż wszystkie, oznacz wybrane
           deps.forEach(d => {
             d._highlighted = fs.has(d.routeId.toUpperCase());
             d._dimmed = !d._highlighted;
           });
         } else {
-          // Filtrowanie - usuń niewybrane
           deps = deps.filter(d => fs.has(d.routeId.toUpperCase()));
         }
       } else {
-        // Brak filtrów - pokaż wszystkie normalnie
         deps.forEach(d => {
           d._highlighted = false;
           d._dimmed = false;
@@ -740,7 +806,6 @@ class ZtmGdanskCard extends HTMLElement {
       const isLate = delayMin > 0;
       const isRealtime = d.status === "REALTIME";
       
-      // Klasy dla podświetlania
       let rowClass = '';
       if (imminent) rowClass += ' imminent';
       if (d._highlighted) rowClass += ' highlighted';
@@ -754,7 +819,7 @@ class ZtmGdanskCard extends HTMLElement {
         timeColHTML = `<div class="time-main">${formatHHMM(d.theoreticalTime)}</div>`;
       }
       
-      return `<div class="dep-row${rowClass ? rowClass : ''}">
+      return `<div class="dep-row${rowClass}">
         <span class="badge" style="background:${routeColor(d.routeId)}">${d.routeId}</span>
         <span class="headsign">${d.headsign}</span>
         <div class="time-col">${timeColHTML}</div>

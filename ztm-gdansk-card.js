@@ -88,6 +88,56 @@ function findStopName(stopId, stops) {
   return stop ? stop.stopDesc : null;
 }
 
+/* ── Routes cache (per stop, refreshed every 6h) ── */
+
+const ROUTES_CACHE = {};
+const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 godzin
+
+function getCachedRoutes(stopId) {
+  const entry = ROUTES_CACHE[stopId];
+  if (entry && (Date.now() - entry.timestamp) < CACHE_TTL) {
+    return entry.routes;
+  }
+  return null;
+}
+
+function setCachedRoutes(stopId, routes) {
+  ROUTES_CACHE[stopId] = {
+    routes: routes,
+    timestamp: Date.now(),
+  };
+}
+
+async function loadRoutesForStop(stopId, currentRoutes = []) {
+  if (!stopId) return [];
+  
+  // Sprawdź cache
+  const cached = getCachedRoutes(stopId);
+  if (cached) return cached;
+  
+  try {
+    const res = await fetch(`${DEPARTURES_URL}?stopId=${encodeURIComponent(stopId)}`);
+    if (!res.ok) return currentRoutes;
+    const data = await res.json();
+    const newRoutes = [...new Set((data.departures || []).map(d => String(d.routeShortName || d.routeId || "")))].filter(Boolean);
+    
+    // Merge z już istniejącymi
+    const merged = [...new Set([...currentRoutes, ...newRoutes])];
+    merged.sort((a, b) => {
+      const aN = a.startsWith('N') || a.startsWith('n');
+      const bN = b.startsWith('N') || b.startsWith('n');
+      if (aN && !bN) return 1;
+      if (!aN && bN) return -1;
+      return parseInt(a, 10) - parseInt(b, 10);
+    });
+    
+    setCachedRoutes(stopId, merged);
+    return merged;
+  } catch (_) {
+    return currentRoutes;
+  }
+}
+
 /* ── Static CSS ── */
 
 const CARD_CSS = `
@@ -252,29 +302,45 @@ class ZtmGdanskCardEditor extends HTMLElement {
     this._render();
   }
 
-  async _loadRoutesForStop(stopId) {
+  async _fetchRoutesForStop(stopId) {
     if (!stopId) {
       this._availableRoutes = [];
-      this._render();
+      this._updateRoutesChips();
       return;
     }
-    try {
-      const res = await fetch(`${DEPARTURES_URL}?stopId=${encodeURIComponent(stopId)}`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const routes = [...new Set((data.departures || []).map(d => String(d.routeShortName || d.routeId || "")))].filter(Boolean);
-      routes.sort((a, b) => {
-        const aN = a.startsWith('N') || a.startsWith('n');
-        const bN = b.startsWith('N') || b.startsWith('n');
-        if (aN && !bN) return 1;
-        if (!aN && bN) return -1;
-        return parseInt(a, 10) - parseInt(b, 10);
-      });
-      this._availableRoutes = routes;
-    } catch (_) {
-      this._availableRoutes = [];
+    this._availableRoutes = await loadRoutesForStop(stopId, this._availableRoutes);
+    this._updateRoutesChips();
+  }
+
+  _updateRoutesChips() {
+    const container = this.shadowRoot.querySelector('.available-routes');
+    if (!container) return;
+    
+    if (this._availableRoutes.length === 0) {
+      container.innerHTML = '';
+      return;
     }
-    this._render();
+    
+    container.innerHTML = `
+      <span style="font-size:11px;color:var(--secondary-text-color,#888);">Dostępne linie (kliknij aby dodać):</span>
+      <div class="route-chips">
+        ${this._availableRoutes.map(r => `<span class="route-chip" style="background:${routeColor(r)}" data-route="${r}">${r}</span>`).join("")}
+      </div>`;
+    
+    container.querySelectorAll('.route-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const route = chip.getAttribute('data-route');
+        const filterInput = this.shadowRoot.getElementById('filter_routes');
+        if (filterInput && route) {
+          const current = filterInput.value.split(",").map(r => r.trim()).filter(Boolean);
+          if (!current.includes(route)) {
+            current.push(route);
+            filterInput.value = current.join(", ");
+            this._fire();
+          }
+        }
+      });
+    });
   }
 
   _fire() {
@@ -305,15 +371,6 @@ class ZtmGdanskCardEditor extends HTMLElement {
           ${this._stops.map(s => `<option value="${s.stopId}" ${String(s.stopId) === String(c.stop_id) ? "selected" : ""} data-search="${s.stopDesc.toLowerCase()} ${s.stopId}">${s.stopDesc} (${s.stopId})</option>`).join("")}
          </select>`
       : `<input id="stop_id" type="number" value="${c.stop_id || ""}" placeholder="np. 14945" />`;
-
-    const routesHtml = this._availableRoutes.length > 0
-      ? `<div class="available-routes">
-          <span style="font-size:11px;color:var(--secondary-text-color,#888);">Dostępne linie (kliknij aby dodać):</span>
-          <div class="route-chips">
-            ${this._availableRoutes.map(r => `<span class="route-chip" style="background:${routeColor(r)}" data-route="${r}">${r}</span>`).join("")}
-          </div>
-        </div>`
-      : '';
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -361,7 +418,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
           <label>Filtruj linie (oddziel przecinkami)</label>
           <input id="filter_routes" type="text" value="${(c.filter_routes || []).join(", ")}" placeholder="np. 110, 148, N8" />
           <div class="hint">Zostaw puste, aby wyświetlić wszystkie linie</div>
-          ${routesHtml}
+          <div class="available-routes"></div>
         </div>
         <div class="row">
           <label>Odświeżanie (sekundy, min. 15)</label>
@@ -397,35 +454,19 @@ class ZtmGdanskCardEditor extends HTMLElement {
     const stopSelect = this.shadowRoot.getElementById("stop_id");
     if (stopSelect) {
       stopSelect.addEventListener("change", () => {
-        this._loadRoutesForStop(stopSelect.value);
+        this._fetchRoutesForStop(stopSelect.value);
         this._fire();
       });
     }
-
-    // Kliknięcie na chip dodaje linię do filtra
-    this.shadowRoot.querySelectorAll('.route-chip').forEach(chip => {
-      chip.addEventListener('click', () => {
-        const route = chip.getAttribute('data-route');
-        const filterInput = this.shadowRoot.getElementById('filter_routes');
-        if (filterInput && route) {
-          const current = filterInput.value.split(",").map(r => r.trim()).filter(Boolean);
-          if (!current.includes(route)) {
-            current.push(route);
-            filterInput.value = current.join(", ");
-            this._fire();
-          }
-        }
-      });
-    });
 
     ["title", "max_departures", "filter_routes", "refresh_interval", "show_delays", "hide_terminus"].forEach(id => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener("change", () => this._fire());
     });
 
-    // Pobierz linie dla aktualnie wybranego przystanku
+    // Załaduj dostępne linie dla aktualnego przystanku
     if (c.stop_id) {
-      this._loadRoutesForStop(c.stop_id);
+      this._fetchRoutesForStop(c.stop_id);
     }
   }
 }

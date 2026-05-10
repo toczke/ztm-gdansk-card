@@ -4,11 +4,12 @@
  *
  * Data source: TRISTAR open data by ZTM Gdańsk / Otwarty Gdańsk (CC-BY)
  *   Departures:  https://ckan2.multimediagdansk.pl/departures?stopId={id}
- *   Stops list:  https://mapa.ztm.gda.pl/.../stopsingdansk.json
+ *   Stops list:  https://ckan2.multimediagdansk.pl/dataset/.../stops.json
  */
 
 const DEPARTURES_URL = "https://ckan2.multimediagdansk.pl/departures";
-const STOPS_URL = "https://mapa.ztm.gda.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/d3e96eb6-25ad-4d6c-8651-b1eb39155945/download/stopsingdansk.json";
+const STOPS_URL =
+  "https://ckan2.multimediagdansk.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
 
 const CARD_VERSION = "1.0.0";
 
@@ -25,7 +26,8 @@ function routeColor(routeId) {
 
 function minutesUntil(isoString) {
   if (!isoString) return null;
-  return Math.round((new Date(isoString) - Date.now()) / 60_000);
+  const diff = Math.round((new Date(isoString) - Date.now()) / 60_000);
+  return diff;
 }
 
 function formatMins(min) {
@@ -44,6 +46,33 @@ function formatHHMM(isoString) {
 
 function normalizeText(text) {
   return (text || "").replace(/\s/g, "").toLowerCase().replace(/[0-9]+$/, "");
+}
+
+/* ── Global stops cache ── */
+
+async function loadAllStops() {
+  try {
+    // Spróbuj najpierw URL z domeny ckan2
+    let res = await fetch(STOPS_URL);
+    // Jeśli błąd, spróbuj z mapa.ztm.gda.pl
+    if (!res.ok) {
+      const altUrl = "https://mapa.ztm.gda.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
+      res = await fetch(altUrl);
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    const today = Object.keys(data).sort().reverse()[0];
+    const stops = (data[today]?.stops || []).filter(s => s.stopDesc && !s.nonpassenger);
+    return stops;
+  } catch (e) {
+    console.warn("[ztm-gdansk-card] Nie można pobrać listy przystanków:", e.message);
+    return [];
+  }
+}
+
+function findStopName(stopId, stops) {
+  const stop = stops.find(s => String(s.stopId) === String(stopId));
+  return stop ? stop.stopDesc : null;
 }
 
 /* ── Editor ──────────────────────────────────────────────────────────────── */
@@ -66,26 +95,17 @@ class ZtmGdanskCardEditor extends HTMLElement {
   }
 
   async _loadStops() {
-    try {
-      const res = await fetch(STOPS_URL);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const today = Object.keys(data).sort().reverse()[0];
-      this._stops = (data[today]?.stops || [])
-        .filter((s) => s.stopDesc && !s.nonpassenger)
-        .sort((a, b) => a.stopDesc.localeCompare(b.stopDesc, "pl"));
-      window.__ztmStopsCache = this._stops;
-    } catch (e) {
-      console.warn("[ztm-gdansk-card] Nie można załadować listy przystanków:", e.message);
-      this._stops = window.__ztmStopsCache || [];
-    }
+    this._stops = await loadAllStops();
     this._render();
   }
 
   _fire() {
     const get = (id) => this.shadowRoot.getElementById(id);
     const filterRaw = get("filter_routes").value;
-    const routes = filterRaw.split(",").map((r) => r.trim()).filter(Boolean);
+    const routes = filterRaw
+      .split(",")
+      .map((r) => r.trim())
+      .filter(Boolean);
 
     const cfg = {
       ...this._config,
@@ -108,14 +128,14 @@ class ZtmGdanskCardEditor extends HTMLElement {
     const c = this._config;
     const stopOpts =
       this._stops.length > 0
-        ? `<select id="stop_id">
-            <option value="">— wybierz przystanek —</option>
+        ? `<input id="stop_search" type="text" placeholder="Szukaj nazwy lub ID..." autocomplete="off" />
+           <select id="stop_id" size="8">
             ${this._stops
               .map(
                 (s) =>
                   `<option value="${s.stopId}" ${
                     String(s.stopId) === String(c.stop_id) ? "selected" : ""
-                  }>${s.stopDesc} (${s.stopId})</option>`
+                  } data-search="${s.stopDesc.toLowerCase()} ${s.stopId}">${s.stopDesc} (${s.stopId})</option>`
               )
               .join("")}
            </select>`
@@ -143,7 +163,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
         <div class="row">
           <label>Przystanek (stop_id)</label>
           ${stopOpts}
-          <div class="hint">ID słupka przystankowego z systemu TRISTAR</div>
+          <div class="hint">Wyszukaj po nazwie lub ID przystanku</div>
         </div>
         <div class="row">
           <label>Tytuł karty (opcjonalnie)</label>
@@ -176,6 +196,19 @@ class ZtmGdanskCardEditor extends HTMLElement {
         </div>
       </div>
     `;
+
+    // Wyszukiwarka
+    const searchEl = this.shadowRoot.getElementById("stop_search");
+    if (searchEl) {
+      searchEl.addEventListener("input", () => {
+        const query = searchEl.value.toLowerCase();
+        const options = this.shadowRoot.querySelectorAll("#stop_id option");
+        options.forEach(opt => {
+          const txt = (opt.getAttribute("data-search") || "").toLowerCase();
+          opt.style.display = txt.includes(query) ? "" : "none";
+        });
+      });
+    }
 
     ["stop_id", "title", "max_departures", "filter_routes", "refresh_interval", "show_delays", "hide_terminus"].forEach((id) => {
       const el = this.shadowRoot.getElementById(id);
@@ -280,38 +313,6 @@ class ZtmGdanskCard extends HTMLElement {
     if (this._tickTimer) clearInterval(this._tickTimer);
   }
 
-  async _loadStopName() {
-    if (this._stopName) return;
-    
-    // Najpierw sprawdź cache z edytora
-    if (window.__ztmStopsCache) {
-      const stop = window.__ztmStopsCache.find(s => String(s.stopId) === String(this._config.stop_id));
-      if (stop) {
-        this._stopName = stop.stopDesc;
-        return;
-      }
-    }
-    
-    // Jeśli nie ma w cache, spróbuj pobrać
-    try {
-      const res = await fetch(STOPS_URL);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      const today = Object.keys(data).sort().reverse()[0];
-      const stops = data[today]?.stops || [];
-      const stop = stops.find(s => String(s.stopId) === String(this._config.stop_id));
-      if (stop) {
-        this._stopName = stop.stopDesc;
-        window.__ztmStopsCache = stops;
-        return;
-      }
-    } catch (e) {
-      console.debug("[ztm-gdansk-card] Nie udało się pobrać nazwy przystanku:", e.message);
-    }
-    
-    this._stopName = this._stopName || `Przystanek ${this._config.stop_id}`;
-  }
-
   async _fetchDepartures() {
     if (this._departures.length === 0) {
       this._loading = true;
@@ -321,7 +322,16 @@ class ZtmGdanskCard extends HTMLElement {
     this._render();
 
     try {
-      await this._loadStopName();
+      // Pobierz nazwę przystanku z listy
+      if (!this._stopName) {
+        const stops = await loadAllStops();
+        const name = findStopName(this._config.stop_id, stops);
+        if (name) {
+          this._stopName = name;
+        } else {
+          this._stopName = `Przystanek ${this._config.stop_id}`;
+        }
+      }
 
       const url = `${DEPARTURES_URL}?stopId=${encodeURIComponent(this._config.stop_id)}`;
       const res = await fetch(url);
@@ -340,7 +350,7 @@ class ZtmGdanskCard extends HTMLElement {
         (d) => !d.estimatedTime || new Date(d.estimatedTime) > Date.now() - 30_000
       );
 
-      if (this._config.hide_terminus && this._stopName) {
+      if (this._config.hide_terminus && this._stopName && !this._stopName.startsWith("Przystanek")) {
         const stopNameNormalized = normalizeText(this._stopName);
         deps = deps.filter(d => {
           const headsignNormalized = normalizeText(d.headsign);

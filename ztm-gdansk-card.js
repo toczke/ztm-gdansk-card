@@ -4,11 +4,12 @@
  *
  * Data source: TRISTAR open data by ZTM Gdańsk / Otwarty Gdańsk (CC-BY)
  *   Departures:  https://ckan2.multimediagdansk.pl/departures?stopId={id}
- *   Stops list:  https://ckan2.multimediagdansk.pl/dataset/.../stops.json
+ *   Stops list:  https://mapa.ztm.gda.pl/.../stopsingdansk.json
  */
 
 const DEPARTURES_URL = "https://ckan2.multimediagdansk.pl/departures";
 const STOPS_URL = "https://mapa.ztm.gda.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/d3e96eb6-25ad-4d6c-8651-b1eb39155945/download/stopsingdansk.json";
+
 const CARD_VERSION = "1.0.0";
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
@@ -16,16 +17,15 @@ const CARD_VERSION = "1.0.0";
 function routeColor(routeId) {
   const s = String(routeId || "");
   if (!s) return "#6b7280";
-  if (/^[Nn]/.test(s)) return "#1e2a6e";          // night lines  – dark navy
+  if (/^[Nn]/.test(s)) return "#1e2a6e";
   const n = parseInt(s, 10);
-  if (!isNaN(n) && n < 100) return "#0369a1";      // tram (<100)  – blue
-  return "#c2410c";                                 // bus          – orange-red
+  if (!isNaN(n) && n < 100) return "#0369a1";
+  return "#c2410c";
 }
 
 function minutesUntil(isoString) {
   if (!isoString) return null;
-  const diff = Math.round((new Date(isoString) - Date.now()) / 60_000);
-  return diff;
+  return Math.round((new Date(isoString) - Date.now()) / 60_000);
 }
 
 function formatMins(min) {
@@ -44,28 +44,6 @@ function formatHHMM(isoString) {
 
 function normalizeText(text) {
   return (text || "").replace(/\s/g, "").toLowerCase().replace(/[0-9]+$/, "");
-}
-
-/* ── Global stops cache ── */
-
-let _stopsCache = null;
-
-async function loadStopsCache() {
-  if (_stopsCache) return _stopsCache;
-  try {
-    const res = await fetch(STOPS_URL);
-    const data = await res.json();
-    const today = Object.keys(data).sort().reverse()[0];
-    _stopsCache = data[today]?.stops || [];
-    return _stopsCache;
-  } catch (_) {
-    return [];
-  }
-}
-
-function getStopName(stopId, stops) {
-  const stop = stops.find(s => String(s.stopId) === String(stopId));
-  return stop ? stop.stopDesc : null;
 }
 
 /* ── Editor ──────────────────────────────────────────────────────────────── */
@@ -90,13 +68,16 @@ class ZtmGdanskCardEditor extends HTMLElement {
   async _loadStops() {
     try {
       const res = await fetch(STOPS_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       const today = Object.keys(data).sort().reverse()[0];
       this._stops = (data[today]?.stops || [])
         .filter((s) => s.stopDesc && !s.nonpassenger)
         .sort((a, b) => a.stopDesc.localeCompare(b.stopDesc, "pl"));
-    } catch (_) {
-      this._stops = [];
+      window.__ztmStopsCache = this._stops;
+    } catch (e) {
+      console.warn("[ztm-gdansk-card] Nie można załadować listy przystanków:", e.message);
+      this._stops = window.__ztmStopsCache || [];
     }
     this._render();
   }
@@ -104,10 +85,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
   _fire() {
     const get = (id) => this.shadowRoot.getElementById(id);
     const filterRaw = get("filter_routes").value;
-    const routes = filterRaw
-      .split(",")
-      .map((r) => r.trim())
-      .filter(Boolean);
+    const routes = filterRaw.split(",").map((r) => r.trim()).filter(Boolean);
 
     const cfg = {
       ...this._config,
@@ -224,8 +202,6 @@ class ZtmGdanskCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
   }
 
-  /* ── HACS / HA integration ── */
-
   static getConfigElement() {
     return document.createElement("ztm-gdansk-card-editor");
   }
@@ -271,8 +247,6 @@ class ZtmGdanskCard extends HTMLElement {
     return Math.ceil((this._config.max_departures || 10) / 2) + 2;
   }
 
-  /* ── Lifecycle ── */
-
   connectedCallback() {
     this._startRefreshTimer();
     this._startTickTimer();
@@ -306,7 +280,37 @@ class ZtmGdanskCard extends HTMLElement {
     if (this._tickTimer) clearInterval(this._tickTimer);
   }
 
-  /* ── Data fetching ── */
+  async _loadStopName() {
+    if (this._stopName) return;
+    
+    // Najpierw sprawdź cache z edytora
+    if (window.__ztmStopsCache) {
+      const stop = window.__ztmStopsCache.find(s => String(s.stopId) === String(this._config.stop_id));
+      if (stop) {
+        this._stopName = stop.stopDesc;
+        return;
+      }
+    }
+    
+    // Jeśli nie ma w cache, spróbuj pobrać
+    try {
+      const res = await fetch(STOPS_URL);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const today = Object.keys(data).sort().reverse()[0];
+      const stops = data[today]?.stops || [];
+      const stop = stops.find(s => String(s.stopId) === String(this._config.stop_id));
+      if (stop) {
+        this._stopName = stop.stopDesc;
+        window.__ztmStopsCache = stops;
+        return;
+      }
+    } catch (e) {
+      console.debug("[ztm-gdansk-card] Nie udało się pobrać nazwy przystanku:", e.message);
+    }
+    
+    this._stopName = this._stopName || `Przystanek ${this._config.stop_id}`;
+  }
 
   async _fetchDepartures() {
     if (this._departures.length === 0) {
@@ -317,16 +321,7 @@ class ZtmGdanskCard extends HTMLElement {
     this._render();
 
     try {
-      // Pobierz nazwę przystanku z cache'a jeśli jeszcze nie mamy
-      if (!this._stopName) {
-        const stops = await loadStopsCache();
-        const name = getStopName(this._config.stop_id, stops);
-        if (name) {
-          this._stopName = name;
-        } else {
-          this._stopName = `Przystanek ${this._config.stop_id}`;
-        }
-      }
+      await this._loadStopName();
 
       const url = `${DEPARTURES_URL}?stopId=${encodeURIComponent(this._config.stop_id)}`;
       const res = await fetch(url);
@@ -341,12 +336,10 @@ class ZtmGdanskCard extends HTMLElement {
         delaySeconds: d.delayInSeconds || d.delay || 0,
       }));
 
-      // Drop already-departed
       deps = deps.filter(
         (d) => !d.estimatedTime || new Date(d.estimatedTime) > Date.now() - 30_000
       );
 
-      // Filtruj kursy kończące się na tym przystanku
       if (this._config.hide_terminus && this._stopName) {
         const stopNameNormalized = normalizeText(this._stopName);
         deps = deps.filter(d => {
@@ -355,17 +348,13 @@ class ZtmGdanskCard extends HTMLElement {
         });
       }
 
-      // Route filter
       const filters = this._config.filter_routes;
       if (Array.isArray(filters) && filters.length > 0) {
         const fs = new Set(filters.map((f) => String(f).trim().toUpperCase()));
         deps = deps.filter((d) => fs.has(d.routeId.toUpperCase()));
       }
 
-      // Sort by estimated time ascending
-      deps.sort(
-        (a, b) => new Date(a.estimatedTime) - new Date(b.estimatedTime)
-      );
+      deps.sort((a, b) => new Date(a.estimatedTime) - new Date(b.estimatedTime));
 
       this._departures = deps.slice(0, this._config.max_departures || 10);
       this._lastUpdate = new Date();
@@ -376,8 +365,6 @@ class ZtmGdanskCard extends HTMLElement {
     this._loading = false;
     this._render();
   }
-
-  /* ── Rendering ── */
 
   _render() {
     const c = this._config;
@@ -393,12 +380,10 @@ class ZtmGdanskCard extends HTMLElement {
     const CSS = `
       :host { display: block; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-
       ha-card {
         overflow: hidden;
         font-family: var(--paper-font-body1_-_font-family, 'Segoe UI', system-ui, sans-serif);
       }
-
       .header {
         background: #c2410c;
         padding: 12px 14px;
@@ -440,7 +425,6 @@ class ZtmGdanskCard extends HTMLElement {
       .refresh-btn:hover { background: rgba(255,255,255,0.28); }
       .refresh-btn.spinning { animation: spin 0.7s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
-
       .col-header {
         display: grid;
         grid-template-columns: 56px 1fr 80px;
@@ -454,7 +438,6 @@ class ZtmGdanskCard extends HTMLElement {
         border-bottom: 1px solid var(--divider-color, #e5e5e5);
       }
       .col-time { text-align: right; }
-
       .dep-row {
         display: grid;
         grid-template-columns: 56px 1fr 80px;
@@ -466,7 +449,6 @@ class ZtmGdanskCard extends HTMLElement {
       }
       .dep-row:last-child { border-bottom: none; }
       .dep-row.imminent { background: rgba(194,65,12,0.06); }
-
       .badge {
         display: inline-flex;
         align-items: center;
@@ -479,7 +461,6 @@ class ZtmGdanskCard extends HTMLElement {
         min-width: 44px;
         letter-spacing: 0.01em;
       }
-
       .headsign {
         font-size: 13px;
         color: var(--primary-text-color, #111);
@@ -487,7 +468,6 @@ class ZtmGdanskCard extends HTMLElement {
         overflow: hidden;
         text-overflow: ellipsis;
       }
-
       .time-col { text-align: right; }
       .mins {
         font-size: 13px;
@@ -530,8 +510,6 @@ class ZtmGdanskCard extends HTMLElement {
         padding: 1px 4px;
         margin-top: 2px;
       }
-
-      /* skeleton */
       .skel { background: var(--divider-color, #e5e5e5); border-radius: 4px; }
       @keyframes shimmer {
         0%   { opacity: 0.5; }
@@ -539,8 +517,6 @@ class ZtmGdanskCard extends HTMLElement {
         100% { opacity: 0.5; }
       }
       .skel { animation: shimmer 1.4s ease-in-out infinite; }
-
-      /* error / empty */
       .state-msg {
         padding: 24px 16px;
         text-align: center;
@@ -549,7 +525,6 @@ class ZtmGdanskCard extends HTMLElement {
         line-height: 1.6;
       }
       .state-msg .icon { font-size: 28px; display: block; margin-bottom: 8px; }
-
       .footer {
         padding: 6px 14px;
         font-size: 10px;
@@ -560,7 +535,6 @@ class ZtmGdanskCard extends HTMLElement {
       }
     `;
 
-    /* ── Skeleton rows ── */
     const skeletonRows = () =>
       Array.from({ length: c.max_departures || 10 }, (_, i) =>
         `<div class="dep-row">
@@ -573,7 +547,6 @@ class ZtmGdanskCard extends HTMLElement {
         </div>`
       ).join("");
 
-    /* ── Departure rows ── */
     const depRows = () => {
       if (this._error) {
         return `<div class="state-msg">
@@ -628,15 +601,12 @@ class ZtmGdanskCard extends HTMLElement {
                   aria-label="Odśwież"
                   onclick="this.getRootNode().host._fetchDepartures()">↻</button>
         </div>
-
         <div class="col-header">
           <span>Linia</span>
           <span>Kierunek</span>
           <span class="col-time">Odjazd</span>
         </div>
-
         ${this._loading ? skeletonRows() : depRows()}
-
         <div class="footer">
           <span>${lastUpdateStr ? `Odświeżono: ${lastUpdateStr}` : "Ładowanie…"}</span>
           <span>TRISTAR · otwarte dane ZTM</span>

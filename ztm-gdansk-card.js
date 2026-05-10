@@ -423,6 +423,7 @@ class ZtmGdanskCard extends HTMLElement {
     this._tickTimer = null;
     this._fetching = false;
     this._abortController = null;
+    this._firstRender = true;
     this.attachShadow({ mode: "open" });
   }
 
@@ -463,6 +464,8 @@ class ZtmGdanskCard extends HTMLElement {
       this._departures = [];
       this._loading = true;
       this._error = null;
+      this._firstRender = true;
+      this._fullRender();
       this._fetchDepartures();
     }
   }
@@ -523,35 +526,25 @@ class ZtmGdanskCard extends HTMLElement {
   /* ── Data fetching ── */
 
   async _fetchDepartures() {
-    // Unikaj duplikacji requestów
     if (this._fetching) return;
     
     this._abortFetch();
     this._fetching = true;
     this._abortController = new AbortController();
     
-    if (this._departures.length === 0) {
+    if (this._firstRender) {
       this._loading = true;
+      this._firstRender = false;
     }
     
     this._error = null;
-    
-    // Pierwszy render buduje cały DOM
-    if (this._loading) {
-      this._fullRender();
-    }
 
     try {
       if (!this._stopName) {
         const stops = await loadAllStops();
         const name = findStopName(this._config.stop_id, stops);
-        if (name) {
-          this._stopName = name;
-        } else {
-          this._stopName = `Przystanek ${this._config.stop_id}`;
-        }
-        // Aktualizuj tytuł jeśli się zmienił
-        if (!this._loading) this._updateTitle();
+        this._stopName = name || `Przystanek ${this._config.stop_id}`;
+        this._updateTitle();
       }
 
       const url = `${DEPARTURES_URL}?stopId=${encodeURIComponent(this._config.stop_id)}`;
@@ -577,10 +570,7 @@ class ZtmGdanskCard extends HTMLElement {
 
       if (this._config.hide_terminus && this._stopName && !this._stopName.startsWith("Przystanek")) {
         const stopNameNormalized = normalizeText(this._stopName);
-        deps = deps.filter(d => {
-          const headsignNormalized = normalizeText(d.headsign);
-          return headsignNormalized !== stopNameNormalized;
-        });
+        deps = deps.filter(d => normalizeText(d.headsign) !== stopNameNormalized);
       }
 
       const filters = this._config.filter_routes;
@@ -602,12 +592,8 @@ class ZtmGdanskCard extends HTMLElement {
     this._fetching = false;
     this._abortController = null;
     
-    if (this._shadowReady) {
-      this._updateDepartureList();
-      this._updateFooter();
-    } else {
-      this._fullRender();
-    }
+    this._updateDepartureList();
+    this._updateFooter();
   }
 
   /* ── Open vehicle on map ── */
@@ -620,13 +606,10 @@ class ZtmGdanskCard extends HTMLElement {
     if (routeId && tripId) {
       const today = new Date().toISOString().split('T')[0];
       let mapUrl = `https://mapa.ztm.gda.pl/?routeId=${encodeURIComponent(routeId)}&tripId=${encodeURIComponent(tripId)}&date=${today}`;
-      if (vehicleCode) {
-        mapUrl += `&vehicle=${encodeURIComponent(vehicleCode)}`;
-      }
+      if (vehicleCode) mapUrl += `&vehicle=${encodeURIComponent(vehicleCode)}`;
       window.open(mapUrl, '_blank');
     } else if (routeId) {
-      const mapUrl = `https://mapa.ztm.gda.pl/?line=${encodeURIComponent(routeId)}&stop=${encodeURIComponent(this._config.stop_id)}`;
-      window.open(mapUrl, '_blank');
+      window.open(`https://mapa.ztm.gda.pl/?line=${encodeURIComponent(routeId)}&stop=${encodeURIComponent(this._config.stop_id)}`, '_blank');
     }
   }
 
@@ -662,7 +645,6 @@ class ZtmGdanskCard extends HTMLElement {
       </ha-card>
     `;
 
-    this._shadowReady = true;
     this._attachClickListeners();
   }
 
@@ -771,4 +753,14 @@ customElements.define("ztm-gdansk-card", ZtmGdanskCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "ztm-gdansk-card",
-  name: "ZTM
+  name: "ZTM Gdańsk Timetable Card",
+  description: "Tablica odjazdów ZTM Gdańsk (TRISTAR) dla wybranego przystanku",
+  preview: true,
+  documentationURL: "https://github.com/toczke/ztm-gdansk-card",
+});
+
+console.info(
+  `%c ZTM-GDANSK-CARD %c v${CARD_VERSION} `,
+  "background:#DA2128;color:#fff;padding:2px 6px;border-radius:4px 0 0 4px;font-weight:bold",
+  "background:#1f2937;color:#fff;padding:2px 6px;border-radius:0 4px 4px 0"
+);

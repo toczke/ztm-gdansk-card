@@ -233,8 +233,6 @@ class ZtmGdanskCard extends HTMLElement {
     this.attachShadow({ mode: "open" });
   }
 
-  /* ── HACS / HA integration ── */
-
   static getConfigElement() {
     return document.createElement("ztm-gdansk-card-editor");
   }
@@ -280,8 +278,6 @@ class ZtmGdanskCard extends HTMLElement {
     return Math.ceil((this._config.max_departures || 10) / 2) + 2;
   }
 
-  /* ── Lifecycle ── */
-
   connectedCallback() {
     this._startRefreshTimer();
     this._startTickTimer();
@@ -314,8 +310,6 @@ class ZtmGdanskCard extends HTMLElement {
     this._stopRefreshTimer();
     if (this._tickTimer) clearInterval(this._tickTimer);
   }
-
-  /* ── Data fetching ── */
 
   async _fetchDepartures() {
     if (this._departures.length === 0) {
@@ -476,48 +470,46 @@ class ZtmGdanskCard extends HTMLElement {
       .refresh-btn.spinning { animation: spin 0.7s linear infinite; }
       @keyframes spin { to { transform: rotate(360deg); } }
 
-      .table {
-        width: 100%;
-        border-collapse: collapse;
+      .dep-list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
       }
-      .table th {
-        font-size: 10px;
-        font-weight: 600;
-        letter-spacing: 0.07em;
-        text-transform: uppercase;
-        color: var(--secondary-text-color, #888);
-        padding: 6px 14px;
-        text-align: left;
-        border-bottom: 1px solid var(--divider-color, #e5e5e5);
-      }
-      .table th:last-child { text-align: right; }
-      .table td {
-        padding: 8px 14px;
+
+      .dep-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 14px;
         border-bottom: 1px solid var(--divider-color, #f0f0f0);
-        vertical-align: middle;
+        transition: background 0.1s;
+        min-height: 52px;
       }
-      .table tr:last-child td { border-bottom: none; }
-
-      .table tr.clickable { cursor: pointer; }
-      .table tr.clickable:hover { background: rgba(194,65,12,0.06); }
-      .table tr.imminent { background: rgba(194,65,12,0.04); }
-      .table tr.clickable.imminent:hover { background: rgba(194,65,12,0.1); }
-
-      .col-line { width: 48px; }
-      .col-dest { }
-      .col-time { text-align: right; white-space: nowrap; min-width: 90px; }
+      .dep-row:last-child { border-bottom: none; }
+      .dep-row.clickable { cursor: pointer; }
+      .dep-row.clickable:hover { background: rgba(194,65,12,0.06); }
+      .dep-row.imminent { background: rgba(194,65,12,0.04); }
+      .dep-row.clickable.imminent:hover { background: rgba(194,65,12,0.1); }
 
       .badge {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 2px 6px;
-        border-radius: 5px;
-        font-size: 12px;
+        padding: 3px 7px;
+        border-radius: 6px;
+        font-size: 13px;
         font-weight: 700;
         color: #fff;
-        min-width: 38px;
-        line-height: 1.4;
+        min-width: 42px;
+        flex-shrink: 0;
+      }
+
+      .dep-info {
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
       }
 
       .headsign {
@@ -527,23 +519,29 @@ class ZtmGdanskCard extends HTMLElement {
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        display: block;
       }
 
-      .time-main {
+      .dep-details {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        flex-wrap: wrap;
+      }
+
+      .mins {
         font-size: 13px;
         font-weight: 600;
         color: var(--primary-text-color, #111);
       }
-      .time-main.imminent { color: #c2410c; }
-      .time-main.realtime::after {
+      .mins.imminent { color: #c2410c; }
+      .mins.realtime::before {
         content: '';
         display: inline-block;
-        width: 5px;
-        height: 5px;
+        width: 6px;
+        height: 6px;
         background: #10b981;
         border-radius: 50%;
-        margin-left: 4px;
+        margin-right: 5px;
         animation: pulse 1.5s infinite;
         vertical-align: middle;
       }
@@ -552,39 +550,30 @@ class ZtmGdanskCard extends HTMLElement {
         50% { opacity: 1; }
       }
 
-      .time-scheduled {
+      .mins-scheduled {
         font-size: 13px;
         font-weight: 600;
         color: var(--primary-text-color, #111);
       }
 
-      .time-sub {
+      .delay-badge {
         font-size: 11px;
-        color: var(--secondary-text-color, #888);
+        font-weight: 600;
       }
-
-      .time-original {
-        text-decoration: line-through;
-        color: var(--secondary-text-color, #999);
-        font-size: 11px;
-        margin-right: 4px;
-      }
-
-      .delay-tag {
-        display: inline-block;
-        font-size: 10px;
-        font-weight: 700;
-        border-radius: 3px;
-        padding: 1px 4px;
-        margin-left: 4px;
-      }
-      .delay-tag.late {
+      .delay-badge.late {
         color: #c2410c;
-        background: rgba(194,65,12,0.12);
       }
-      .delay-tag.early {
+      .delay-badge.early {
         color: #0369a1;
-        background: rgba(3,105,161,0.12);
+      }
+
+      .dep-time {
+        text-align: right;
+        flex-shrink: 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--secondary-text-color, #666);
+        min-width: 45px;
       }
 
       .skel { background: var(--divider-color, #e5e5e5); border-radius: 4px; }
@@ -615,26 +604,29 @@ class ZtmGdanskCard extends HTMLElement {
 
     const skeletonRows = () =>
       Array.from({ length: c.max_departures || 10 }, (_, i) =>
-        `<tr>
-          <td class="col-line"><div class="skel" style="height:24px;width:38px;border-radius:5px;animation-delay:${i * 0.08}s"></div></td>
-          <td class="col-dest"><div class="skel" style="height:13px;width:${55 + (i * 13) % 35}%;animation-delay:${i * 0.08 + 0.05}s"></div></td>
-          <td class="col-time"><div class="skel" style="height:13px;width:48px;margin-left:auto;animation-delay:${i * 0.08 + 0.1}s"></div></td>
-        </tr>`
+        `<div class="dep-row">
+          <div class="skel" style="height:26px;width:42px;border-radius:6px;animation-delay:${i * 0.08}s"></div>
+          <div class="dep-info">
+            <div class="skel" style="height:13px;width:${55 + (i * 13) % 35}%;animation-delay:${i * 0.08 + 0.05}s"></div>
+            <div class="skel" style="height:11px;width:40%;margin-top:4px;animation-delay:${i * 0.08 + 0.1}s"></div>
+          </div>
+          <div class="skel" style="height:13px;width:40px;animation-delay:${i * 0.08 + 0.15}s"></div>
+        </div>`
       ).join("");
 
     const depRows = () => {
       if (this._error) {
-        return `<tr><td colspan="3"><div class="state-msg">
+        return `<div class="state-msg">
           <span class="icon">⚠️</span>
           Błąd pobierania danych<br>
           <small style="font-size:11px">${this._error}</small>
-        </div></td></tr>`;
+        </div>`;
       }
       if (this._departures.length === 0) {
-        return `<tr><td colspan="3"><div class="state-msg">
+        return `<div class="state-msg">
           <span class="icon">⏳</span>
           Brak nadchodzących odjazdów
-        </div></td></tr>`;
+        </div>`;
       }
 
       return this._departures.map((d, idx) => {
@@ -646,31 +638,33 @@ class ZtmGdanskCard extends HTMLElement {
         const isRealtime = d.status === "REALTIME";
         const isActive = isRealtime && (d.vehicleCode || d.vehicleId);
         
+        let detailsHTML = '';
         let timeHTML = '';
+        
         if (isRealtime) {
-          const delayTag = showDelay
-            ? `<span class="delay-tag ${isLate ? 'late' : 'early'}">${isLate ? '+' : ''}${delayMin} min</span>`
+          const delayPart = showDelay
+            ? ` • <span class="delay-badge ${isLate ? 'late' : 'early'}">${isLate ? '+' : ''}${delayMin} min</span>`
             : '';
-          const originalTime = showDelay
-            ? `<span class="time-original">${formatHHMM(d.theoreticalTime)}</span>`
-            : '';
-          timeHTML = `
-            <div>${originalTime}<span class="time-main${imminent ? ' imminent' : ''} realtime">${formatMins(mins)}</span>${delayTag}</div>
-            <div class="time-sub">${formatHHMM(d.estimatedTime)}</div>`;
+          detailsHTML = `<div class="dep-details">
+            <span class="mins${imminent ? ' imminent' : ''} realtime">${formatMins(mins)}</span>${delayPart}
+          </div>`;
+          timeHTML = `<div class="dep-time">${formatHHMM(d.estimatedTime)}</div>`;
         } else {
-          timeHTML = `<div class="time-scheduled">${formatHHMM(d.theoreticalTime)}</div>`;
+          detailsHTML = `<div class="dep-details">
+            <span class="mins-scheduled">wg rozkładu</span>
+          </div>`;
+          timeHTML = `<div class="dep-time">${formatHHMM(d.theoreticalTime)}</div>`;
         }
         
         return `
-          <tr data-idx="${idx}" class="${imminent ? 'imminent' : ''}${isActive ? ' clickable' : ''}">
-            <td class="col-line">
-              <span class="badge" style="background:${routeColor(d.routeId)}">${d.routeId}</span>
-            </td>
-            <td class="col-dest">
-              <span class="headsign">${d.headsign}</span>
-            </td>
-            <td class="col-time">${timeHTML}</td>
-          </tr>`;
+          <div data-idx="${idx}" class="dep-row${imminent ? ' imminent' : ''}${isActive ? ' clickable' : ''}">
+            <span class="badge" style="background:${routeColor(d.routeId)}">${d.routeId}</span>
+            <div class="dep-info">
+              <div class="headsign">${d.headsign}</div>
+              ${detailsHTML}
+            </div>
+            ${timeHTML}
+          </div>`;
       }).join("");
     };
 
@@ -688,18 +682,9 @@ class ZtmGdanskCard extends HTMLElement {
                   onclick="this.getRootNode().host._fetchDepartures()">↻</button>
         </div>
 
-        <table class="table">
-          <thead>
-            <tr>
-              <th class="col-line">Linia</th>
-              <th class="col-dest">Kierunek</th>
-              <th class="col-time">Odjazd</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${this._loading ? skeletonRows() : depRows()}
-          </tbody>
-        </table>
+        <div class="dep-list">
+          ${this._loading ? skeletonRows() : depRows()}
+        </div>
 
         <div class="footer">
           <span>${lastUpdateStr ? `Odświeżono: ${lastUpdateStr}` : "Ładowanie…"}</span>
@@ -710,7 +695,7 @@ class ZtmGdanskCard extends HTMLElement {
 
     // Podpinamy event listenery do klikalnych wierszy
     if (!this._loading && !this._error) {
-      this.shadowRoot.querySelectorAll('tr.clickable').forEach(row => {
+      this.shadowRoot.querySelectorAll('.dep-row.clickable').forEach(row => {
         const idx = parseInt(row.getAttribute('data-idx'));
         if (!isNaN(idx) && this._departures[idx]) {
           row.addEventListener('click', () => this._openMap(this._departures[idx]));

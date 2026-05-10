@@ -153,10 +153,7 @@ const CARD_CSS = `
     min-height: 44px;
   }
   .dep-row:last-child { border-bottom: none; }
-  .dep-row.clickable { cursor: pointer; }
-  .dep-row.clickable:hover { background: rgba(218,33,40,0.06); }
   .dep-row.imminent { background: rgba(218,33,40,0.04); }
-  .dep-row.clickable.imminent:hover { background: rgba(218,33,40,0.1); }
   .badge {
     display: inline-flex;
     align-items: center;
@@ -464,20 +461,6 @@ class ZtmGdanskCard extends HTMLElement {
     this._updateFooter();
   }
 
-  _openMap(dep) {
-    const routeId = dep.routeId;
-    const tripId = dep.tripId;
-    const vehicleCode = dep.vehicleCode || dep.vehicleId;
-    if (routeId && tripId) {
-      const today = new Date().toISOString().split('T')[0];
-      let mapUrl = `https://mapa.ztm.gda.pl/?routeId=${encodeURIComponent(routeId)}&tripId=${encodeURIComponent(tripId)}&date=${today}`;
-      if (vehicleCode) mapUrl += `&vehicle=${encodeURIComponent(vehicleCode)}`;
-      window.open(mapUrl, '_blank');
-    } else if (routeId) {
-      window.open(`https://mapa.ztm.gda.pl/?line=${encodeURIComponent(routeId)}&stop=${encodeURIComponent(this._config.stop_id)}`, '_blank');
-    }
-  }
-
   _fullRender() {
     const c = this._config;
     const title = c.title || this._stopName || `Przystanek ${c.stop_id}`;
@@ -502,7 +485,6 @@ class ZtmGdanskCard extends HTMLElement {
       </ha-card>`;
 
     this._rendered = true;
-    this._attachClickListeners();
   }
 
   _updateTitle() {
@@ -512,7 +494,7 @@ class ZtmGdanskCard extends HTMLElement {
 
   _updateDepartureList() {
     const el = this.shadowRoot.querySelector('.dep-list');
-    if (el) { el.innerHTML = this._renderDepartureList(); this._attachClickListeners(); }
+    if (el) el.innerHTML = this._renderDepartureList();
   }
 
   _updateFooter() {
@@ -537,14 +519,13 @@ class ZtmGdanskCard extends HTMLElement {
     if (this._error) return `<div class="state-msg"><span class="icon">⚠️</span>Błąd pobierania danych<br><small>${this._error}</small></div>`;
     if (this._departures.length === 0) return `<div class="state-msg"><span class="icon">⏳</span>Brak nadchodzących odjazdów</div>`;
 
-    return this._departures.map((d, idx) => {
+    return this._departures.map(d => {
       const mins = minutesUntil(d.estimatedTime);
       const imminent = mins !== null && mins <= 2;
       const delayMin = Math.round((d.delaySeconds || 0) / 60);
       const showDelay = c.show_delays !== false && Math.abs(delayMin) >= 1;
       const isLate = delayMin > 0;
       const isRealtime = d.status === "REALTIME";
-      const isActive = isRealtime && (d.vehicleCode || d.vehicleId);
       
       let timeColHTML = '';
       if (isRealtime) {
@@ -554,22 +535,12 @@ class ZtmGdanskCard extends HTMLElement {
         timeColHTML = `<div class="time-main">${formatHHMM(d.theoreticalTime)}</div>`;
       }
       
-      return `<div data-idx="${idx}" class="dep-row${imminent ? ' imminent' : ''}${isActive ? ' clickable' : ''}">
+      return `<div class="dep-row${imminent ? ' imminent' : ''}">
         <span class="badge" style="background:${routeColor(d.routeId)}">${d.routeId}</span>
         <span class="headsign">${d.headsign}</span>
         <div class="time-col">${timeColHTML}</div>
       </div>`;
     }).join("");
-  }
-
-  _attachClickListeners() {
-    if (this._loading || this._error) return;
-    this.shadowRoot.querySelectorAll('.dep-row.clickable').forEach(row => {
-      const idx = parseInt(row.getAttribute('data-idx'));
-      if (!isNaN(idx) && this._departures[idx]) {
-        row.addEventListener('click', () => this._openMap(this._departures[idx]));
-      }
-    });
   }
 }
 

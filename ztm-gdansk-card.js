@@ -13,7 +13,7 @@ const DEPARTURES_URL = "https://ckan2.multimediagdansk.pl/departures";
 const STOPS_URL =
   "https://ckan2.multimediagdansk.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
 
-const CARD_VERSION = "1.2.0";
+const CARD_VERSION = "1.3.0";
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -88,10 +88,10 @@ function findStopName(stopId, stops) {
   return stop ? stop.stopDesc : null;
 }
 
-/* ── Routes cache (per stop, refreshed every 6h) ── */
+/* ── Routes cache ── */
 
 const ROUTES_CACHE = {};
-const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 godzin
+const CACHE_TTL = 6 * 60 * 60 * 1000;
 
 function getCachedRoutes(stopId) {
   const entry = ROUTES_CACHE[stopId];
@@ -102,16 +102,11 @@ function getCachedRoutes(stopId) {
 }
 
 function setCachedRoutes(stopId, routes) {
-  ROUTES_CACHE[stopId] = {
-    routes: routes,
-    timestamp: Date.now(),
-  };
+  ROUTES_CACHE[stopId] = { routes, timestamp: Date.now() };
 }
 
 async function loadRoutesForStop(stopId, currentRoutes = []) {
   if (!stopId) return [];
-  
-  // Sprawdź cache
   const cached = getCachedRoutes(stopId);
   if (cached) return cached;
   
@@ -120,8 +115,6 @@ async function loadRoutesForStop(stopId, currentRoutes = []) {
     if (!res.ok) return currentRoutes;
     const data = await res.json();
     const newRoutes = [...new Set((data.departures || []).map(d => String(d.routeShortName || d.routeId || "")))].filter(Boolean);
-    
-    // Merge z już istniejącymi
     const merged = [...new Set([...currentRoutes, ...newRoutes])];
     merged.sort((a, b) => {
       const aN = a.startsWith('N') || a.startsWith('n');
@@ -130,7 +123,6 @@ async function loadRoutesForStop(stopId, currentRoutes = []) {
       if (!aN && bN) return -1;
       return parseInt(a, 10) - parseInt(b, 10);
     });
-    
     setCachedRoutes(stopId, merged);
     return merged;
   } catch (_) {
@@ -186,11 +178,21 @@ const CARD_CSS = `
     gap: 10px;
     padding: 10px 14px;
     border-bottom: 1px solid var(--divider-color, #f0f0f0);
-    transition: background 0.1s;
+    transition: all 0.2s;
     min-height: 46px;
   }
   .dep-row:last-child { border-bottom: none; }
   .dep-row.imminent { background: rgba(218,33,40,0.04); }
+  .dep-row.dimmed {
+    opacity: 0.35;
+    transition: opacity 0.3s;
+  }
+  .dep-row.dimmed:hover {
+    opacity: 0.7;
+  }
+  .dep-row.highlighted {
+    opacity: 1;
+  }
   .badge {
     display: inline-flex;
     align-items: center;
@@ -202,6 +204,10 @@ const CARD_CSS = `
     color: #fff;
     min-width: 40px;
     flex-shrink: 0;
+    transition: opacity 0.2s;
+  }
+  .dimmed .badge {
+    filter: grayscale(30%);
   }
   .headsign {
     font-size: 13px;
@@ -284,6 +290,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
     this._config = {};
     this._stops = [];
     this._availableRoutes = [];
+    this._searchTimer = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -357,6 +364,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
         max_departures: parseInt(get("max_departures").value, 10) || 10,
         refresh_interval: parseInt(get("refresh_interval").value, 10) || 30,
         filter_routes: routes.length ? routes : undefined,
+        highlight_mode: get("highlight_mode").checked,
         show_delays: get("show_delays").checked,
         hide_terminus: get("hide_terminus").checked,
       }}
@@ -367,8 +375,9 @@ class ZtmGdanskCardEditor extends HTMLElement {
     const c = this._config;
     const stopOpts = this._stops.length > 0
       ? `<input id="stop_search" type="text" placeholder="Szukaj nazwy lub ID..." autocomplete="off" />
-         <select id="stop_id" size="8">
-          ${this._stops.map(s => `<option value="${s.stopId}" ${String(s.stopId) === String(c.stop_id) ? "selected" : ""} data-search="${s.stopDesc.toLowerCase()} ${s.stopId}">${s.stopDesc} (${s.stopId})</option>`).join("")}
+         <select id="stop_id">
+            <option value="">— wybierz przystanek —</option>
+            ${this._stops.map(s => `<option value="${s.stopId}" ${String(s.stopId) === String(c.stop_id) ? "selected" : ""}>${s.stopDesc} (${s.stopId})</option>`).join("")}
          </select>`
       : `<input id="stop_id" type="number" value="${c.stop_id || ""}" placeholder="np. 14945" />`;
 
@@ -383,6 +392,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
         .hint { font-size: 11px; color: var(--secondary-text-color, #888); margin-top: 3px; }
         .checkbox-row { display: flex; align-items: center; gap: 8px; }
         .checkbox-row input { width: auto; }
+        .indent { margin-left: 20px; }
         .available-routes { margin-top: 8px; }
         .route-chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
         .route-chip { 
@@ -404,7 +414,7 @@ class ZtmGdanskCardEditor extends HTMLElement {
         <div class="row">
           <label>Przystanek (stop_id)</label>
           ${stopOpts}
-          <div class="hint">Wyszukaj po nazwie lub ID przystanku</div>
+          <div class="hint">Wpisz nazwę lub ID aby wyszukać przystanek</div>
         </div>
         <div class="row">
           <label>Tytuł karty (opcjonalnie)</label>
@@ -418,6 +428,13 @@ class ZtmGdanskCardEditor extends HTMLElement {
           <label>Filtruj linie (oddziel przecinkami)</label>
           <input id="filter_routes" type="text" value="${(c.filter_routes || []).join(", ")}" placeholder="np. 110, 148, N8" />
           <div class="hint">Zostaw puste, aby wyświetlić wszystkie linie</div>
+          <div class="indent">
+            <div class="checkbox-row">
+              <input id="highlight_mode" type="checkbox" ${c.highlight_mode ? "checked" : ""} />
+              <label style="margin:0; font-weight:400;">Podświetlaj zamiast filtrować</label>
+            </div>
+            <div class="hint">Gdy włączone: pokazuje wszystkie odjazdy, wybrane linie są wyróżnione, reszta przygaszona</div>
+          </div>
           <div class="available-routes"></div>
         </div>
         <div class="row">
@@ -439,32 +456,42 @@ class ZtmGdanskCardEditor extends HTMLElement {
       </div>
     `;
 
-    // Wyszukiwarka przystanków
     const searchEl = this.shadowRoot.getElementById("stop_search");
-    if (searchEl) {
-      searchEl.addEventListener("input", () => {
-        const q = searchEl.value.toLowerCase();
-        this.shadowRoot.querySelectorAll("#stop_id option").forEach(opt => {
-          opt.style.display = (opt.getAttribute("data-search") || "").toLowerCase().includes(q) ? "" : "none";
-        });
-      });
-    }
-
-    // Przy zmianie przystanku - pobierz dostępne linie
     const stopSelect = this.shadowRoot.getElementById("stop_id");
-    if (stopSelect) {
+    
+    if (searchEl && stopSelect) {
+      searchEl.addEventListener("input", () => {
+        clearTimeout(this._searchTimer);
+        this._searchTimer = setTimeout(() => {
+          const q = searchEl.value.toLowerCase();
+          const options = stopSelect.querySelectorAll("option");
+          let firstMatch = null;
+          
+          options.forEach(opt => {
+            if (!opt.value) return;
+            const txt = (opt.textContent || "").toLowerCase();
+            const match = txt.includes(q);
+            opt.style.display = match ? "" : "none";
+            if (match && !firstMatch) firstMatch = opt;
+          });
+          
+          if (firstMatch && q.length > 0) {
+            stopSelect.value = firstMatch.value;
+          }
+        }, 200);
+      });
+
       stopSelect.addEventListener("change", () => {
         this._fetchRoutesForStop(stopSelect.value);
         this._fire();
       });
     }
 
-    ["title", "max_departures", "filter_routes", "refresh_interval", "show_delays", "hide_terminus"].forEach(id => {
+    ["title", "max_departures", "filter_routes", "refresh_interval", "show_delays", "hide_terminus", "highlight_mode"].forEach(id => {
       const el = this.shadowRoot.getElementById(id);
       if (el) el.addEventListener("change", () => this._fire());
     });
 
-    // Załaduj dostępne linie dla aktualnego przystanku
     if (c.stop_id) {
       this._fetchRoutesForStop(c.stop_id);
     }
@@ -495,14 +522,14 @@ class ZtmGdanskCard extends HTMLElement {
   }
 
   static getConfigElement() { return document.createElement("ztm-gdansk-card-editor"); }
-  static getStubConfig() { return { type: "custom:ztm-gdansk-card", stop_id: "14945", max_departures: 10, refresh_interval: 30, show_delays: true, hide_terminus: true }; }
+  static getStubConfig() { return { type: "custom:ztm-gdansk-card", stop_id: "14945", max_departures: 10, refresh_interval: 30, show_delays: true, hide_terminus: true, highlight_mode: false }; }
 
   setConfig(config) {
     if (!config.stop_id) throw new Error("[ztm-gdansk-card] stop_id jest wymagane");
     const changed = JSON.stringify(config) !== JSON.stringify(this._config);
     const stopIdChanged = String(this._config.stop_id) !== String(config.stop_id);
     
-    this._config = { max_departures: 10, refresh_interval: 30, show_delays: true, hide_terminus: true, ...config };
+    this._config = { max_departures: 10, refresh_interval: 30, show_delays: true, hide_terminus: true, highlight_mode: false, ...config };
     
     if (changed && this._rendered) {
       if (stopIdChanged) this._stopName = "";
@@ -603,10 +630,29 @@ class ZtmGdanskCard extends HTMLElement {
         deps = deps.filter(d => normalizeText(d.headsign) !== sn);
       }
 
+      // Filtrowanie lub podświetlanie
       const filters = this._config.filter_routes;
+      const isHighlightMode = this._config.highlight_mode;
+      
       if (Array.isArray(filters) && filters.length > 0) {
         const fs = new Set(filters.map(f => String(f).trim().toUpperCase()));
-        deps = deps.filter(d => fs.has(d.routeId.toUpperCase()));
+        
+        if (isHighlightMode) {
+          // Podświetlanie - pokaż wszystkie, oznacz wybrane
+          deps.forEach(d => {
+            d._highlighted = fs.has(d.routeId.toUpperCase());
+            d._dimmed = !d._highlighted;
+          });
+        } else {
+          // Filtrowanie - usuń niewybrane
+          deps = deps.filter(d => fs.has(d.routeId.toUpperCase()));
+        }
+      } else {
+        // Brak filtrów - pokaż wszystkie normalnie
+        deps.forEach(d => {
+          d._highlighted = false;
+          d._dimmed = false;
+        });
       }
 
       deps.sort((a, b) => new Date(a.estimatedTime) - new Date(b.estimatedTime));
@@ -694,6 +740,12 @@ class ZtmGdanskCard extends HTMLElement {
       const isLate = delayMin > 0;
       const isRealtime = d.status === "REALTIME";
       
+      // Klasy dla podświetlania
+      let rowClass = '';
+      if (imminent) rowClass += ' imminent';
+      if (d._highlighted) rowClass += ' highlighted';
+      if (d._dimmed) rowClass += ' dimmed';
+      
       let timeColHTML = '';
       if (isRealtime) {
         const delayPart = showDelay ? ` • <span class="delay-badge ${isLate ? 'late' : 'early'}">${isLate ? '+' : ''}${delayMin} min</span>` : '';
@@ -702,7 +754,7 @@ class ZtmGdanskCard extends HTMLElement {
         timeColHTML = `<div class="time-main">${formatHHMM(d.theoreticalTime)}</div>`;
       }
       
-      return `<div class="dep-row${imminent ? ' imminent' : ''}">
+      return `<div class="dep-row${rowClass ? rowClass : ''}">
         <span class="badge" style="background:${routeColor(d.routeId)}">${d.routeId}</span>
         <span class="headsign">${d.headsign}</span>
         <div class="time-col">${timeColHTML}</div>

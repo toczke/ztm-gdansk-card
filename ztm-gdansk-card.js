@@ -9,7 +9,7 @@
 
 const DEPARTURES_URL = "https://ckan2.multimediagdansk.pl/departures";
 const STOPS_URL =
-  "https://ckan.multimediagdansk.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
+  "https://ckan2.multimediagdansk.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
 
 const CARD_VERSION = "1.0.0";
 
@@ -33,8 +33,6 @@ function minutesUntil(isoString) {
 function formatMins(min) {
   if (min === null) return "—";
   if (min <= 0) return "za <1 min";
-  if (min === 1) return "za 1 min";
-  if (min === 2 || min === 3 || min === 4) return `za ${min} min`;
   return `za ${min} min`;
 }
 
@@ -47,7 +45,7 @@ function formatHHMM(isoString) {
 }
 
 function normalizeText(text) {
-  return (text || "").replace(/\s/g, "").toLowerCase();
+  return (text || "").replace(/\s/g, "").toLowerCase().replace(/[0-9]+$/, "");
 }
 
 /* ── Editor ──────────────────────────────────────────────────────────────── */
@@ -226,6 +224,8 @@ class ZtmGdanskCard extends HTMLElement {
   setConfig(config) {
     if (!config.stop_id) throw new Error("[ztm-gdansk-card] stop_id jest wymagane");
     const changed = JSON.stringify(config) !== JSON.stringify(this._config);
+    const stopIdChanged = String(this._config.stop_id) !== String(config.stop_id);
+    
     this._config = {
       max_departures: 10,
       refresh_interval: 30,
@@ -233,8 +233,11 @@ class ZtmGdanskCard extends HTMLElement {
       hide_terminus: true,
       ...config,
     };
+    
     if (changed) {
-      this._stopName = "";
+      if (stopIdChanged) {
+        this._stopName = "";
+      }
       this._departures = [];
       this._loading = true;
       this._error = null;
@@ -302,7 +305,11 @@ class ZtmGdanskCard extends HTMLElement {
       if (!res.ok) throw new Error(`HTTP ${res.status} – sprawdź stop_id`);
       const data = await res.json();
 
-      if (data.stopName) this._stopName = data.stopName;
+      if (data.stopName) {
+        this._stopName = data.stopName;
+      } else if (!this._stopName) {
+        this._stopName = `Przystanek ${this._config.stop_id}`;
+      }
 
       let deps = (data.departures || []).map((d) => ({
         routeId: String(d.routeId || d.routeShortName || "?"),
@@ -352,7 +359,6 @@ class ZtmGdanskCard extends HTMLElement {
 
   _render() {
     const c = this._config;
-    // Poprawka: używaj faktycznej nazwy przystanku
     const title = c.title || this._stopName || `Przystanek ${c.stop_id}`;
     const lastUpdateStr = this._lastUpdate
       ? this._lastUpdate.toLocaleTimeString("pl-PL", {

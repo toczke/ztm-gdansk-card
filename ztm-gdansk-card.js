@@ -13,7 +13,7 @@ const DEPARTURES_URL = "https://ckan2.multimediagdansk.pl/departures";
 const STOPS_URL =
   "https://ckan2.multimediagdansk.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
 
-const CARD_VERSION = "1.1.0";
+const CARD_VERSION = "1.2.0";
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
@@ -50,30 +50,219 @@ function normalizeText(text) {
   return (text || "").replace(/\s/g, "").toLowerCase().replace(/[0-9]+$/, "");
 }
 
-/* ── Global stops cache ── */
+/* ── Global stops cache (Promise-based deduplication) ── */
 
-async function loadAllStops() {
-  try {
-    let res = await fetch(STOPS_URL);
-    if (!res.ok) {
-      const altUrl = "https://mapa.ztm.gda.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
-      res = await fetch(altUrl);
+let _stopsPromise = null;
+
+function loadAllStops() {
+  if (_stopsPromise) return _stopsPromise;
+  
+  _stopsPromise = (async () => {
+    try {
+      let res = await fetch(STOPS_URL);
+      if (!res.ok) {
+        const altUrl = "https://mapa.ztm.gda.pl/dataset/c24aa637-3619-4dc2-a171-a23eec8f2172/resource/4c4025f0-01bf-41f7-a39f-d156d201b82b/download/stops.json";
+        res = await fetch(altUrl);
+      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      const today = Object.keys(data).sort().reverse()[0];
+      const stops = (data[today]?.stops || []).filter(s => s.stopDesc && !s.nonpassenger);
+      return stops;
+    } catch (e) {
+      console.warn("[ztm-gdansk-card] Nie można pobrać listy przystanków:", e.message);
+      return [];
     }
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const today = Object.keys(data).sort().reverse()[0];
-    const stops = (data[today]?.stops || []).filter(s => s.stopDesc && !s.nonpassenger);
-    return stops;
-  } catch (e) {
-    console.warn("[ztm-gdansk-card] Nie można pobrać listy przystanków:", e.message);
-    return [];
-  }
+  })();
+  
+  return _stopsPromise;
 }
 
 function findStopName(stopId, stops) {
   const stop = stops.find(s => String(s.stopId) === String(stopId));
   return stop ? stop.stopDesc : null;
 }
+
+/* ── Static CSS (poza render) ── */
+
+const CARD_CSS = `
+  :host { display: block; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  ha-card {
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+
+  .header {
+    background: #DA2128;
+    padding: 12px 14px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    user-select: none;
+  }
+  .header-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    color: #fff;
+  }
+  .header-icon svg {
+    width: 22px;
+    height: 22px;
+  }
+  .header-body { flex: 1; min-width: 0; }
+  .header-title {
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .header-sub {
+    color: rgba(255,255,255,0.72);
+    font-size: 11px;
+    margin-top: 1px;
+  }
+  .refresh-btn {
+    background: rgba(255,255,255,0.18);
+    border: none;
+    border-radius: 6px;
+    color: #fff;
+    width: 32px;
+    height: 32px;
+    cursor: pointer;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+  .refresh-btn:hover { background: rgba(255,255,255,0.28); }
+  .refresh-btn.spinning { animation: spin 0.7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .dep-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .dep-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--divider-color, #f0f0f0);
+    transition: background 0.1s;
+    min-height: 44px;
+  }
+  .dep-row:last-child { border-bottom: none; }
+  .dep-row.clickable { cursor: pointer; }
+  .dep-row.clickable:hover { background: rgba(218,33,40,0.06); }
+  .dep-row.imminent { background: rgba(218,33,40,0.04); }
+  .dep-row.clickable.imminent:hover { background: rgba(218,33,40,0.1); }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3px 7px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    min-width: 40px;
+    flex-shrink: 0;
+  }
+
+  .headsign {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--primary-text-color, #111);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .time-col {
+    text-align: right;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+  }
+
+  .time-main {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--primary-text-color, #111);
+    white-space: nowrap;
+  }
+
+  .time-sub {
+    font-size: 11px;
+    color: var(--secondary-text-color, #888);
+    white-space: nowrap;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .time-sub .dot {
+    color: #10b981;
+    font-weight: 700;
+  }
+
+  .delay-badge {
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .delay-badge.late { color: #DA2128; }
+  .delay-badge.early { color: #0369a1; }
+
+  .skel { background: var(--divider-color, #e5e5e5); border-radius: 4px; }
+  @keyframes shimmer {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+  }
+  .skel { animation: shimmer 1.4s ease-in-out infinite; }
+
+  .state-msg {
+    padding: 24px 16px;
+    text-align: center;
+    color: var(--secondary-text-color, #888);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+  .state-msg .icon { font-size: 28px; display: block; margin-bottom: 8px; }
+
+  .footer {
+    padding: 6px 14px;
+    font-size: 10px;
+    color: var(--secondary-text-color, #aaa);
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid var(--divider-color, #f0f0f0);
+  }
+`;
+
+const BUS_STOP_ICON = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <path d="M16 16.01L16.01 15.9989" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M6 16.01L6.01 15.9989" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M20 22V15V8M20 8H18L18 2H22V8H20Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M4 20V22H6V20H4Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M14 20V22H16V20H14Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M16 20H2.6C2.26863 20 2 19.7314 2 19.4V12.6C2 12.2686 2.26863 12 2.6 12H16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M14 8H6M14 2H6C3.79086 2 2 3.79086 2 6V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
 
 /* ── Editor ──────────────────────────────────────────────────────────────── */
 
@@ -232,6 +421,8 @@ class ZtmGdanskCard extends HTMLElement {
     this._lastUpdate = null;
     this._refreshTimer = null;
     this._tickTimer = null;
+    this._fetching = false;
+    this._abortController = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -291,6 +482,7 @@ class ZtmGdanskCard extends HTMLElement {
 
   disconnectedCallback() {
     this._stopTimers();
+    this._abortFetch();
   }
 
   _startRefreshTimer() {
@@ -308,24 +500,46 @@ class ZtmGdanskCard extends HTMLElement {
 
   _startTickTimer() {
     this._tickTimer = setInterval(() => {
-      if (!this._loading && !this._error) this._render();
+      if (!this._loading && !this._error) this._updateDepartureList();
     }, 10_000);
   }
 
   _stopTimers() {
     this._stopRefreshTimer();
-    if (this._tickTimer) clearInterval(this._tickTimer);
+    if (this._tickTimer) {
+      clearInterval(this._tickTimer);
+      this._tickTimer = null;
+    }
+  }
+
+  _abortFetch() {
+    if (this._abortController) {
+      this._abortController.abort();
+      this._abortController = null;
+    }
+    this._fetching = false;
   }
 
   /* ── Data fetching ── */
 
   async _fetchDepartures() {
+    // Unikaj duplikacji requestów
+    if (this._fetching) return;
+    
+    this._abortFetch();
+    this._fetching = true;
+    this._abortController = new AbortController();
+    
     if (this._departures.length === 0) {
       this._loading = true;
     }
     
     this._error = null;
-    this._render();
+    
+    // Pierwszy render buduje cały DOM
+    if (this._loading) {
+      this._fullRender();
+    }
 
     try {
       if (!this._stopName) {
@@ -336,10 +550,12 @@ class ZtmGdanskCard extends HTMLElement {
         } else {
           this._stopName = `Przystanek ${this._config.stop_id}`;
         }
+        // Aktualizuj tytuł jeśli się zmienił
+        if (!this._loading) this._updateTitle();
       }
 
       const url = `${DEPARTURES_URL}?stopId=${encodeURIComponent(this._config.stop_id)}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: this._abortController.signal });
       if (!res.ok) throw new Error(`HTTP ${res.status} – sprawdź stop_id`);
       const data = await res.json();
 
@@ -378,11 +594,20 @@ class ZtmGdanskCard extends HTMLElement {
       this._departures = deps.slice(0, this._config.max_departures || 10);
       this._lastUpdate = new Date();
     } catch (e) {
+      if (e.name === 'AbortError') return;
       this._error = e.message;
     }
 
     this._loading = false;
-    this._render();
+    this._fetching = false;
+    this._abortController = null;
+    
+    if (this._shadowReady) {
+      this._updateDepartureList();
+      this._updateFooter();
+    } else {
+      this._fullRender();
+    }
   }
 
   /* ── Open vehicle on map ── */
@@ -407,259 +632,18 @@ class ZtmGdanskCard extends HTMLElement {
 
   /* ── Rendering ── */
 
-  _render() {
+  _fullRender() {
     const c = this._config;
     const title = c.title || this._stopName || `Przystanek ${c.stop_id}`;
     const lastUpdateStr = this._lastUpdate
-      ? this._lastUpdate.toLocaleTimeString("pl-PL", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
+      ? this._lastUpdate.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
       : null;
 
-    const busStopIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M16 16.01L16.01 15.9989" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M6 16.01L6.01 15.9989" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M20 22V15V8M20 8H18L18 2H22V8H20Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M4 20V22H6V20H4Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M14 20V22H16V20H14Z" fill="currentColor" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M16 20H2.6C2.26863 20 2 19.7314 2 19.4V12.6C2 12.2686 2.26863 12 2.6 12H16" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M14 8H6M14 2H6C3.79086 2 2 3.79086 2 6V8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>`;
-
-    const CSS = `
-      :host { display: block; }
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      ha-card {
-        overflow: hidden;
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      }
-
-      .header {
-        background: #DA2128;
-        padding: 12px 14px;
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        user-select: none;
-      }
-      .header-icon {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        width: 28px;
-        height: 28px;
-        color: #fff;
-      }
-      .header-icon svg {
-        width: 22px;
-        height: 22px;
-      }
-      .header-body { flex: 1; min-width: 0; }
-      .header-title {
-        color: #fff;
-        font-size: 15px;
-        font-weight: 600;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .header-sub {
-        color: rgba(255,255,255,0.72);
-        font-size: 11px;
-        margin-top: 1px;
-      }
-      .refresh-btn {
-        background: rgba(255,255,255,0.18);
-        border: none;
-        border-radius: 6px;
-        color: #fff;
-        width: 32px;
-        height: 32px;
-        cursor: pointer;
-        font-size: 16px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: background 0.15s;
-        flex-shrink: 0;
-      }
-      .refresh-btn:hover { background: rgba(255,255,255,0.28); }
-      .refresh-btn.spinning { animation: spin 0.7s linear infinite; }
-      @keyframes spin { to { transform: rotate(360deg); } }
-
-      .dep-list {
-        list-style: none;
-        padding: 0;
-        margin: 0;
-      }
-
-      .dep-row {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 10px 14px;
-        border-bottom: 1px solid var(--divider-color, #f0f0f0);
-        transition: background 0.1s;
-        min-height: 44px;
-      }
-      .dep-row:last-child { border-bottom: none; }
-      .dep-row.clickable { cursor: pointer; }
-      .dep-row.clickable:hover { background: rgba(218,33,40,0.06); }
-      .dep-row.imminent { background: rgba(218,33,40,0.04); }
-      .dep-row.clickable.imminent:hover { background: rgba(218,33,40,0.1); }
-
-      .badge {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        padding: 3px 7px;
-        border-radius: 6px;
-        font-size: 13px;
-        font-weight: 700;
-        color: #fff;
-        min-width: 40px;
-        flex-shrink: 0;
-      }
-
-      .headsign {
-        font-size: 13px;
-        font-weight: 500;
-        color: var(--primary-text-color, #111);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        flex: 1;
-        min-width: 0;
-      }
-
-      .time-col {
-        text-align: right;
-        flex-shrink: 0;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 2px;
-      }
-
-      .time-main {
-        font-size: 14px;
-        font-weight: 600;
-        color: var(--primary-text-color, #111);
-        white-space: nowrap;
-      }
-
-      .time-sub {
-        font-size: 11px;
-        color: var(--secondary-text-color, #888);
-        white-space: nowrap;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
-      .time-sub .dot {
-        color: #10b981;
-        font-weight: 700;
-      }
-
-      .delay-badge {
-        font-size: 11px;
-        font-weight: 600;
-      }
-      .delay-badge.late { color: #DA2128; }
-      .delay-badge.early { color: #0369a1; }
-
-      .skel { background: var(--divider-color, #e5e5e5); border-radius: 4px; }
-      @keyframes shimmer {
-        0%, 100% { opacity: 0.5; }
-        50% { opacity: 1; }
-      }
-      .skel { animation: shimmer 1.4s ease-in-out infinite; }
-
-      .state-msg {
-        padding: 24px 16px;
-        text-align: center;
-        color: var(--secondary-text-color, #888);
-        font-size: 13px;
-        line-height: 1.6;
-      }
-      .state-msg .icon { font-size: 28px; display: block; margin-bottom: 8px; }
-
-      .footer {
-        padding: 6px 14px;
-        font-size: 10px;
-        color: var(--secondary-text-color, #aaa);
-        display: flex;
-        justify-content: space-between;
-        border-top: 1px solid var(--divider-color, #f0f0f0);
-      }
-    `;
-
-    /* ── Skeleton rows ── */
-    const skeletonRows = () =>
-      Array.from({ length: c.max_departures || 10 }, (_, i) =>
-        `<div class="dep-row">
-          <div class="skel" style="height:26px;width:40px;border-radius:6px;animation-delay:${i * 0.08}s"></div>
-          <div class="skel" style="height:13px;width:${55 + (i * 13) % 35}%;animation-delay:${i * 0.08 + 0.05}s;flex:1"></div>
-          <div class="skel" style="height:13px;width:60px;animation-delay:${i * 0.08 + 0.1}s"></div>
-        </div>`
-      ).join("");
-
-    /* ── Departure rows ── */
-    const depRows = () => {
-      if (this._error) {
-        return `<div class="state-msg">
-          <span class="icon">⚠️</span>
-          Błąd pobierania danych<br>
-          <small style="font-size:11px">${this._error}</small>
-        </div>`;
-      }
-      if (this._departures.length === 0) {
-        return `<div class="state-msg">
-          <span class="icon">⏳</span>
-          Brak nadchodzących odjazdów
-        </div>`;
-      }
-
-      return this._departures.map((d, idx) => {
-        const mins = minutesUntil(d.estimatedTime);
-        const imminent = mins !== null && mins <= 2;
-        const delayMin = Math.round((d.delaySeconds || 0) / 60);
-        const showDelay = c.show_delays !== false && Math.abs(delayMin) >= 1;
-        const isLate = delayMin > 0;
-        const isRealtime = d.status === "REALTIME";
-        const isActive = isRealtime && (d.vehicleCode || d.vehicleId);
-        
-        let timeColHTML = '';
-        
-        if (isRealtime) {
-          const delayPart = showDelay
-            ? ` • <span class="delay-badge ${isLate ? 'late' : 'early'}">${isLate ? '+' : ''}${delayMin} min</span>`
-            : '';
-          timeColHTML = `
-            <div class="time-main${imminent ? ' imminent' : ''}">${formatHHMM(d.estimatedTime)}</div>
-            <div class="time-sub"><span class="dot">●</span> ${formatMins(mins)}${delayPart}</div>`;
-        } else {
-          timeColHTML = `
-            <div class="time-main">${formatHHMM(d.theoreticalTime)}</div>`;
-        }
-        
-        return `
-          <div data-idx="${idx}" class="dep-row${imminent ? ' imminent' : ''}${isActive ? ' clickable' : ''}">
-            <span class="badge" style="background:${routeColor(d.routeId)}">${d.routeId}</span>
-            <span class="headsign">${d.headsign}</span>
-            <div class="time-col">${timeColHTML}</div>
-          </div>`;
-      }).join("");
-    };
-
     this.shadowRoot.innerHTML = `
-      <style>${CSS}</style>
+      <style>${CARD_CSS}</style>
       <ha-card>
         <div class="header">
-          <span class="header-icon" aria-label="przystanek">${busStopIcon}</span>
+          <span class="header-icon" aria-label="przystanek">${BUS_STOP_ICON}</span>
           <div class="header-body">
             <div class="header-title">${title}</div>
             <div class="header-sub">Przystanek ${c.stop_id} · ZTM Gdańsk</div>
@@ -668,11 +652,9 @@ class ZtmGdanskCard extends HTMLElement {
                   aria-label="Odśwież"
                   onclick="this.getRootNode().host._fetchDepartures()">↻</button>
         </div>
-
         <div class="dep-list">
-          ${this._loading ? skeletonRows() : depRows()}
+          ${this._renderDepartureList()}
         </div>
-
         <div class="footer">
           <span>${lastUpdateStr ? `Odświeżono: ${lastUpdateStr}` : "Ładowanie…"}</span>
           <span>TRISTAR · otwarte dane ZTM</span>
@@ -680,15 +662,107 @@ class ZtmGdanskCard extends HTMLElement {
       </ha-card>
     `;
 
-    /* ── Event listeners dla klikalnych wierszy ── */
-    if (!this._loading && !this._error) {
-      this.shadowRoot.querySelectorAll('.dep-row.clickable').forEach(row => {
-        const idx = parseInt(row.getAttribute('data-idx'));
-        if (!isNaN(idx) && this._departures[idx]) {
-          row.addEventListener('click', () => this._openMap(this._departures[idx]));
-        }
-      });
+    this._shadowReady = true;
+    this._attachClickListeners();
+  }
+
+  _updateTitle() {
+    const titleEl = this.shadowRoot.querySelector('.header-title');
+    if (titleEl) {
+      const c = this._config;
+      titleEl.textContent = c.title || this._stopName || `Przystanek ${c.stop_id}`;
     }
+  }
+
+  _updateDepartureList() {
+    const listEl = this.shadowRoot.querySelector('.dep-list');
+    if (listEl) {
+      listEl.innerHTML = this._renderDepartureList();
+      this._attachClickListeners();
+    }
+  }
+
+  _updateFooter() {
+    const footerEl = this.shadowRoot.querySelector('.footer span:first-child');
+    if (footerEl && this._lastUpdate) {
+      footerEl.textContent = `Odświeżono: ${this._lastUpdate.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
+    }
+    
+    const btnEl = this.shadowRoot.querySelector('.refresh-btn');
+    if (btnEl) {
+      btnEl.classList.toggle('spinning', this._loading);
+    }
+  }
+
+  _renderDepartureList() {
+    const c = this._config;
+
+    if (this._loading) {
+      return Array.from({ length: c.max_departures || 10 }, (_, i) =>
+        `<div class="dep-row">
+          <div class="skel" style="height:26px;width:40px;border-radius:6px;animation-delay:${i * 0.08}s"></div>
+          <div class="skel" style="height:13px;width:${55 + (i * 13) % 35}%;animation-delay:${i * 0.08 + 0.05}s;flex:1"></div>
+          <div class="skel" style="height:13px;width:60px;animation-delay:${i * 0.08 + 0.1}s"></div>
+        </div>`
+      ).join("");
+    }
+
+    if (this._error) {
+      return `<div class="state-msg">
+        <span class="icon">⚠️</span>
+        Błąd pobierania danych<br>
+        <small style="font-size:11px">${this._error}</small>
+      </div>`;
+    }
+
+    if (this._departures.length === 0) {
+      return `<div class="state-msg">
+        <span class="icon">⏳</span>
+        Brak nadchodzących odjazdów
+      </div>`;
+    }
+
+    return this._departures.map((d, idx) => {
+      const mins = minutesUntil(d.estimatedTime);
+      const imminent = mins !== null && mins <= 2;
+      const delayMin = Math.round((d.delaySeconds || 0) / 60);
+      const showDelay = c.show_delays !== false && Math.abs(delayMin) >= 1;
+      const isLate = delayMin > 0;
+      const isRealtime = d.status === "REALTIME";
+      const isActive = isRealtime && (d.vehicleCode || d.vehicleId);
+      
+      let timeColHTML = '';
+      
+      if (isRealtime) {
+        const delayPart = showDelay
+          ? ` • <span class="delay-badge ${isLate ? 'late' : 'early'}">${isLate ? '+' : ''}${delayMin} min</span>`
+          : '';
+        timeColHTML = `
+          <div class="time-main${imminent ? ' imminent' : ''}">${formatHHMM(d.estimatedTime)}</div>
+          <div class="time-sub"><span class="dot">●</span> ${formatMins(mins)}${delayPart}</div>`;
+      } else {
+        timeColHTML = `
+          <div class="time-main">${formatHHMM(d.theoreticalTime)}</div>`;
+      }
+      
+      return `
+        <div data-idx="${idx}" class="dep-row${imminent ? ' imminent' : ''}${isActive ? ' clickable' : ''}">
+          <span class="badge" style="background:${routeColor(d.routeId)}">${d.routeId}</span>
+          <span class="headsign">${d.headsign}</span>
+          <div class="time-col">${timeColHTML}</div>
+        </div>`;
+    }).join("");
+  }
+
+  _attachClickListeners() {
+    if (this._loading || this._error) return;
+    
+    this.shadowRoot.querySelectorAll('.dep-row.clickable').forEach(row => {
+      const idx = parseInt(row.getAttribute('data-idx'));
+      if (!isNaN(idx) && this._departures[idx]) {
+        row.addEventListener('click', () => this._openMap(this._departures[idx]));
+      }
+    });
   }
 }
 
@@ -697,14 +771,4 @@ customElements.define("ztm-gdansk-card", ZtmGdanskCard);
 window.customCards = window.customCards || [];
 window.customCards.push({
   type: "ztm-gdansk-card",
-  name: "ZTM Gdańsk Timetable Card",
-  description: "Tablica odjazdów ZTM Gdańsk (TRISTAR) dla wybranego przystanku",
-  preview: true,
-  documentationURL: "https://github.com/toczke/ztm-gdansk-card",
-});
-
-console.info(
-  `%c ZTM-GDANSK-CARD %c v${CARD_VERSION} `,
-  "background:#DA2128;color:#fff;padding:2px 6px;border-radius:4px 0 0 4px;font-weight:bold",
-  "background:#1f2937;color:#fff;padding:2px 6px;border-radius:0 4px 4px 0"
-);
+  name: "ZTM

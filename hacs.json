@@ -1,7 +1,5 @@
 {
   "name": "ZTM Gdańsk Timetable Card",
-  "description": "Lovelace card showing real-time bus & tram departures for any ZTM Gdańsk stop, powered by the TRISTAR open data API.",
   "render_readme": true,
-  "homeassistant": "2023.1.0",
   "filename": "ztm-gdansk-card.js"
 }

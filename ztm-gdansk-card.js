@@ -20,10 +20,38 @@ const CARD_VERSION = "1.2.0";
 function routeColor(routeId) {
   const s = String(routeId || "");
   if (!s) return "#6b7280";
+  
+  // Linie nocne (N...)
   if (/^[Nn]/.test(s)) return "#1e2a6e";
+  
   const n = parseInt(s, 10);
-  if (!isNaN(n) && n < 100) return "#0369a1";
+  if (isNaN(n)) return "#DA2128";
+  
+  // Tramwaje (1-2 cyfry, 1-99)
+  if (n < 100) {
+    // Sezonowe (6x)
+    if (n >= 60 && n < 70) return "#8B4513";
+    // Specjalne (9x)
+    if (n >= 90 && n < 100) return "#4B0082";
+    // Zwykłe tramwaje
+    return "#0369a1";
+  }
+  
+  // Autobusy
   return "#DA2128";
+}
+
+function routeTypeLabel(routeId) {
+  const s = String(routeId || "");
+  if (/^[Nn]/.test(s)) return "Nocna";
+  const n = parseInt(s, 10);
+  if (isNaN(n)) return "";
+  if (n < 100) {
+    if (n >= 60 && n < 70) return "Sezonowa";
+    if (n >= 90 && n < 100) return "Specjalna";
+    return "Tramwaj";
+  }
+  return "";
 }
 
 function minutesUntil(isoString) {
@@ -124,24 +152,6 @@ const CARD_CSS = `
     font-size: 11px;
     margin-top: 1px;
   }
-  .refresh-btn {
-    background: rgba(255,255,255,0.18);
-    border: none;
-    border-radius: 6px;
-    color: #fff;
-    width: 32px;
-    height: 32px;
-    cursor: pointer;
-    font-size: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition: background 0.15s;
-    flex-shrink: 0;
-  }
-  .refresh-btn:hover { background: rgba(255,255,255,0.28); }
-  .refresh-btn.spinning { animation: spin 0.7s linear infinite; }
-  @keyframes spin { to { transform: rotate(360deg); } }
   .dep-list { list-style: none; padding: 0; margin: 0; }
   .dep-row {
     display: flex;
@@ -223,6 +233,9 @@ const CARD_CSS = `
     display: flex;
     justify-content: space-between;
     border-top: 1px solid var(--divider-color, #f0f0f0);
+  }
+  .footer-countdown {
+    color: var(--secondary-text-color, #aaa);
   }
 `;
 
@@ -344,9 +357,11 @@ class ZtmGdanskCard extends HTMLElement {
     this._lastUpdate = null;
     this._refreshTimer = null;
     this._tickTimer = null;
+    this._countdownTimer = null;
     this._fetching = false;
     this._abortController = null;
     this._rendered = false;
+    this._nextRefreshIn = 0;
     this.attachShadow({ mode: "open" });
   }
 
@@ -380,6 +395,7 @@ class ZtmGdanskCard extends HTMLElement {
     }
     this._startRefreshTimer();
     this._startTickTimer();
+    this._startCountdownTimer();
   }
 
   disconnectedCallback() {
@@ -389,13 +405,34 @@ class ZtmGdanskCard extends HTMLElement {
 
   _startRefreshTimer() {
     this._stopRefreshTimer();
-    this._refreshTimer = setInterval(() => this._fetchDepartures(), Math.max(15, this._config.refresh_interval || 30) * 1000);
+    const interval = Math.max(15, this._config.refresh_interval || 30) * 1000;
+    this._nextRefreshIn = Math.floor(interval / 1000);
+    this._refreshTimer = setInterval(() => {
+      this._fetchDepartures();
+      this._nextRefreshIn = Math.floor(interval / 1000);
+    }, interval);
   }
   _stopRefreshTimer() { if (this._refreshTimer) { clearInterval(this._refreshTimer); this._refreshTimer = null; } }
+  
   _startTickTimer() {
     this._tickTimer = setInterval(() => { if (!this._loading && !this._error) this._updateDepartureList(); }, 10000);
   }
-  _stopTimers() { this._stopRefreshTimer(); if (this._tickTimer) { clearInterval(this._tickTimer); this._tickTimer = null; } }
+
+  _startCountdownTimer() {
+    this._countdownTimer = setInterval(() => {
+      if (this._nextRefreshIn > 0) {
+        this._nextRefreshIn--;
+        this._updateCountdown();
+      }
+    }, 1000);
+  }
+
+  _stopTimers() {
+    this._stopRefreshTimer();
+    if (this._tickTimer) { clearInterval(this._tickTimer); this._tickTimer = null; }
+    if (this._countdownTimer) { clearInterval(this._countdownTimer); this._countdownTimer = null; }
+  }
+  
   _abortFetch() {
     if (this._abortController) { this._abortController.abort(); this._abortController = null; }
     this._fetching = false;
@@ -427,10 +464,7 @@ class ZtmGdanskCard extends HTMLElement {
         estimatedTime: d.estimatedTime || d.theoreticalTime || null,
         theoreticalTime: d.theoreticalTime || null,
         delaySeconds: d.delayInSeconds || d.delay || 0,
-        vehicleCode: d.vehicleCode || null,
-        vehicleId: d.vehicleId || null,
         status: d.status || "SCHEDULED",
-        tripId: d.tripId || null,
       }));
 
       deps = deps.filter(d => !d.estimatedTime || new Date(d.estimatedTime) > Date.now() - 30000);
@@ -475,11 +509,10 @@ class ZtmGdanskCard extends HTMLElement {
             <div class="header-title">${title}</div>
             <div class="header-sub">Przystanek ${c.stop_id} · ZTM Gdańsk</div>
           </div>
-          <button class="refresh-btn${this._loading ? " spinning" : ""}" aria-label="Odśwież" onclick="this.getRootNode().host._fetchDepartures()">↻</button>
         </div>
         <div class="dep-list">${this._renderDepartureList()}</div>
         <div class="footer">
-          <span>${lastUpdateStr ? `Odświeżono: ${lastUpdateStr}` : "Ładowanie…"}</span>
+          <span>${lastUpdateStr ? `Odświeżono: ${lastUpdateStr} · Następne za <span class="footer-countdown">${this._nextRefreshIn}s</span>` : "Ładowanie…"}</span>
           <span>TRISTAR · otwarte dane ZTM</span>
         </div>
       </ha-card>`;
@@ -499,9 +532,14 @@ class ZtmGdanskCard extends HTMLElement {
 
   _updateFooter() {
     const el = this.shadowRoot.querySelector('.footer span:first-child');
-    if (el && this._lastUpdate) el.textContent = `Odświeżono: ${this._lastUpdate.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
-    const btn = this.shadowRoot.querySelector('.refresh-btn');
-    if (btn) btn.classList.toggle('spinning', this._loading);
+    if (el && this._lastUpdate) {
+      el.innerHTML = `Odświeżono: ${this._lastUpdate.toLocaleTimeString("pl-PL", { hour: "2-digit", minute: "2-digit", second: "2-digit" })} · Następne za <span class="footer-countdown">${this._nextRefreshIn}s</span>`;
+    }
+  }
+
+  _updateCountdown() {
+    const el = this.shadowRoot.querySelector('.footer-countdown');
+    if (el) el.textContent = `${this._nextRefreshIn}s`;
   }
 
   _renderDepartureList() {

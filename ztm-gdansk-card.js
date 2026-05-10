@@ -383,9 +383,11 @@ class ZtmGdanskCard extends HTMLElement {
     const line = dep.routeId || '';
     
     if (vehicleCode && line) {
+      // Pojazd jest aktywny - otwórz mapę z jego lokalizacją
       const mapUrl = `https://mapa.ztm.gda.pl/?vehicle=${encodeURIComponent(vehicleCode)}&line=${encodeURIComponent(line)}`;
       window.open(mapUrl, '_blank');
     } else if (line) {
+      // Brak pojazdu - pokaż linię na mapie
       const mapUrl = `https://mapa.ztm.gda.pl/?line=${encodeURIComponent(line)}&stop=${encodeURIComponent(this._config.stop_id)}`;
       window.open(mapUrl, '_blank');
     }
@@ -402,6 +404,8 @@ class ZtmGdanskCard extends HTMLElement {
         })
       : null;
 
+    const busStopIcon = `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="17" x2="20" y2="17"/><line x1="6" y1="22" x2="14" y2="22"/><line x1="6" y1="3" x2="14" y2="3"/><circle cx="12" cy="12" r="2.5"/></svg>`;
+
     const CSS = `
       :host { display: block; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -411,7 +415,7 @@ class ZtmGdanskCard extends HTMLElement {
       }
       .header {
         background: #c2410c;
-        padding: 12px 14px;
+        padding: 10px 14px;
         display: flex;
         align-items: center;
         gap: 10px;
@@ -429,15 +433,15 @@ class ZtmGdanskCard extends HTMLElement {
       .header-body { flex: 1; min-width: 0; }
       .header-title {
         color: #fff;
-        font-size: 15px;
+        font-size: 14px;
         font-weight: 600;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       }
       .header-sub {
-        color: rgba(255,255,255,0.72);
-        font-size: 11px;
+        color: rgba(255,255,255,0.7);
+        font-size: 10px;
         margin-top: 1px;
       }
       .refresh-btn {
@@ -460,7 +464,7 @@ class ZtmGdanskCard extends HTMLElement {
       @keyframes spin { to { transform: rotate(360deg); } }
       .col-header {
         display: grid;
-        grid-template-columns: 56px 1fr 90px;
+        grid-template-columns: 52px 1fr auto;
         gap: 8px;
         padding: 5px 14px;
         font-size: 10px;
@@ -470,15 +474,16 @@ class ZtmGdanskCard extends HTMLElement {
         color: var(--secondary-text-color, #888);
         border-bottom: 1px solid var(--divider-color, #e5e5e5);
       }
-      .col-time { text-align: right; }
+      .col-time { text-align: right; min-width: 70px; }
       .dep-row {
         display: grid;
-        grid-template-columns: 56px 1fr 90px;
+        grid-template-columns: 52px 1fr auto;
         gap: 8px;
         align-items: center;
-        padding: 8px 14px;
+        padding: 7px 14px;
         border-bottom: 1px solid var(--divider-color, #f0f0f0);
         transition: background 0.1s;
+        min-height: 48px;
       }
       .dep-row:last-child { border-bottom: none; }
       .dep-row.clickable {
@@ -495,13 +500,14 @@ class ZtmGdanskCard extends HTMLElement {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        padding: 3px 6px;
-        border-radius: 6px;
-        font-size: 13px;
+        padding: 2px 6px;
+        border-radius: 5px;
+        font-size: 12px;
         font-weight: 700;
         color: #fff;
-        min-width: 44px;
+        min-width: 40px;
         letter-spacing: 0.01em;
+        line-height: 1.4;
       }
       .headsign {
         font-size: 13px;
@@ -510,27 +516,28 @@ class ZtmGdanskCard extends HTMLElement {
         overflow: hidden;
         text-overflow: ellipsis;
       }
-      .time-col { text-align: right; }
-      .time-main {
+      .time-col { text-align: right; min-width: 70px; }
+      .time-row {
         display: flex;
         align-items: center;
         justify-content: flex-end;
-        gap: 4px;
+        gap: 3px;
       }
       .mins {
         font-size: 13px;
         font-weight: 600;
         color: var(--primary-text-color, #111);
+        white-space: nowrap;
       }
       .mins.imminent { color: #c2410c; }
       .mins.realtime::after {
         content: '';
         display: inline-block;
-        width: 6px;
-        height: 6px;
+        width: 5px;
+        height: 5px;
         background: #10b981;
         border-radius: 50%;
-        margin-left: 4px;
+        margin-left: 3px;
         animation: pulse 1.5s infinite;
         flex-shrink: 0;
       }
@@ -542,26 +549,29 @@ class ZtmGdanskCard extends HTMLElement {
       .clock {
         font-size: 11px;
         color: var(--secondary-text-color, #888);
-        margin-top: 2px;
+        margin-top: 1px;
       }
-      .clock-scheduled {
+      .clock-main {
         font-size: 13px;
         font-weight: 600;
         color: var(--primary-text-color, #111);
+        white-space: nowrap;
       }
       .clock-strikethrough {
         text-decoration: line-through;
-        color: var(--secondary-text-color, #888);
+        color: var(--secondary-text-color, #999);
         font-size: 11px;
-        margin-right: 4px;
+        margin-right: 3px;
+        white-space: nowrap;
       }
       .delay-badge {
         display: inline-block;
         font-size: 10px;
         font-weight: 700;
-        border-radius: 4px;
+        border-radius: 3px;
         padding: 1px 4px;
         margin-top: 2px;
+        white-space: nowrap;
       }
       .delay-badge.late {
         color: #c2410c;
@@ -571,10 +581,9 @@ class ZtmGdanskCard extends HTMLElement {
         color: #0369a1;
         background: rgba(3,105,161,0.12);
       }
-      /* Tooltip */
       .dep-row.clickable .headsign::after {
         content: " 🗺️";
-        font-size: 11px;
+        font-size: 10px;
         opacity: 0;
         transition: opacity 0.15s;
       }
@@ -606,15 +615,12 @@ class ZtmGdanskCard extends HTMLElement {
       }
     `;
 
-    // Ikona przystanku SVG
-    const busStopIcon = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="17" x2="20" y2="17"/><line x1="6" y1="22" x2="14" y2="22"/><line x1="6" y1="3" x2="14" y2="3"/><circle cx="12" cy="12" r="2"/></svg>`;
-
     const skeletonRows = () =>
       Array.from({ length: c.max_departures || 10 }, (_, i) =>
         `<div class="dep-row">
-          <div class="skel" style="height:26px;width:44px;border-radius:6px;animation-delay:${i * 0.08}s"></div>
+          <div class="skel" style="height:24px;width:40px;border-radius:5px;animation-delay:${i * 0.08}s"></div>
           <div class="skel" style="height:13px;width:${55 + (i * 13) % 35}%;animation-delay:${i * 0.08 + 0.05}s"></div>
-          <div style="text-align:right">
+          <div class="time-col">
             <div class="skel" style="height:13px;width:48px;margin-left:auto;animation-delay:${i * 0.08 + 0.1}s"></div>
             <div class="skel" style="height:11px;width:36px;margin-left:auto;margin-top:4px;animation-delay:${i * 0.08 + 0.15}s"></div>
           </div>
@@ -635,46 +641,48 @@ class ZtmGdanskCard extends HTMLElement {
           Brak nadchodzących odjazdów
         </div>`;
       }
-      return this._departures.map((d) => {
+      return this._departures.map((d, idx) => {
         const mins = minutesUntil(d.estimatedTime);
         const imminent = mins !== null && mins <= 2;
         const delayMin = Math.round((d.delaySeconds || 0) / 60);
         const isDelayed = c.show_delays !== false && Math.abs(delayMin) >= 1;
         const isLate = delayMin > 0;
-        const isEarly = delayMin < 0;
         const isRealtime = d.estimatedTime && d.theoreticalTime && 
                            new Date(d.estimatedTime).getTime() !== new Date(d.theoreticalTime).getTime();
         const isActive = d.status === "REALTIME" && (d.vehicleCode || d.vehicleId);
         
-        // Format opóźnienia/przyspieszenia
-        let delayBadge = '';
+        let delayBadgeHTML = '';
         if (isDelayed) {
           const sign = isLate ? '+' : '';
           const label = `${sign}${delayMin} min`;
           const cssClass = isLate ? 'late' : 'early';
-          delayBadge = `<div class="delay-badge ${cssClass}">${label}</div>`;
+          delayBadgeHTML = `<div class="delay-badge ${cssClass}">${label}</div>`;
         }
         
+        // Unikamy problemu z onclick przez data attributes
+        const dataAttrs = isActive 
+          ? `data-idx="${idx}" class="dep-row${imminent ? " imminent" : ""} clickable"` 
+          : `class="dep-row${imminent ? " imminent" : ""}"`;
+        
         return `
-          <div class="dep-row${imminent ? " imminent" : ""}${isActive ? " clickable" : ""}"
-               ${isActive ? `onclick="this.getRootNode().host._openMap(${JSON.stringify(d).replace(/"/g, '&quot;')})"` : ""}>
+          <div ${dataAttrs}>
             <div>
               <span class="badge" style="background:${routeColor(d.routeId)}">${d.routeId}</span>
             </div>
             <div class="headsign">${d.headsign}</div>
             <div class="time-col">
               ${isRealtime ? `
-                <div class="time-main">
+                <div class="time-row">
                   ${isDelayed ? `<span class="clock-strikethrough">${formatHHMM(d.theoreticalTime)}</span>` : ''}
                   <span class="mins${imminent ? " imminent" : ""} realtime">${formatMins(mins)}</span>
                 </div>
                 <div class="clock">${formatHHMM(d.estimatedTime)}</div>
               ` : `
-                <div class="time-main">
-                  <span class="clock-scheduled">${formatHHMM(d.theoreticalTime)}</span>
+                <div class="time-row">
+                  <span class="clock-main">${formatHHMM(d.theoreticalTime)}</span>
                 </div>
               `}
-              ${delayBadge}
+              ${delayBadgeHTML}
             </div>
           </div>`;
       }).join("");
@@ -705,6 +713,17 @@ class ZtmGdanskCard extends HTMLElement {
         </div>
       </ha-card>
     `;
+
+    // Podpinamy event listenery poza szablonem (bezpieczniej)
+    if (!this._loading && !this._error) {
+      const rows = this.shadowRoot.querySelectorAll('.dep-row.clickable');
+      rows.forEach(row => {
+        const idx = parseInt(row.getAttribute('data-idx'));
+        if (!isNaN(idx) && this._departures[idx]) {
+          row.addEventListener('click', () => this._openMap(this._departures[idx]));
+        }
+      });
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 # ZTM Gdańsk Timetable Card
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://hacs.xyz)
-[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/toczke/ztm-gdansk-card/releases)
+[![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)](https://github.com/toczke/ztm-gdansk-card/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 Lovelace card for Home Assistant showing real-time bus and tram departures for any stop in Gdańsk, powered by the open **TRISTAR** API from ZTM Gdańsk / Otwarty Gdańsk.
@@ -13,21 +13,41 @@ Lovelace card for Home Assistant showing real-time bus and tram departures for a
 ## Features
 
 - 🚌 Real-time departures for any ZTM Gdańsk stop (bus, tram, night lines)
-- 🟢 Live indicator — green dot and "za X min" countdown shown only when TRISTAR has real-time GPS data; scheduled-only departures show just the clock time
-- 🎨 Colour-coded route badges — red for buses, blue for trams, dark navy for night lines
+- 🟢 Live indicator — green dot and "za X min" countdown shown only when TRISTAR has real-time GPS data; scheduled-only and e-ink departures show just the clock time
+- 🎨 Colour-coded route badges — red for buses, blue for trams, black for night lines
 - ⚠️ Delay and early arrival indicators (when TRISTAR reports deviation > 1 min)
-- 🔍 Filter by specific lines — hide mode or highlight mode (dim other lines instead of removing them)
+- 🔍 Filter by specific lines — route chips are loaded from the static timetable, with live departures as fallback
+- 🧾 Full stop pole names in the editor and card title, e.g. `Warneńska 01`
+- ⚫ E-ink mode — monochrome card, no animated skeleton/countdown, static footer, and slower refresh
 - 🚫 Automatically hides terminal arrivals — stops showing buses that are finishing their run at this stop
 - ✏️ Visual editor with stop search and route chips for easy configuration
-- ⏱️ Auto-refresh with configurable interval and live countdown to next refresh
+- ⏱️ Auto-refresh with configurable interval and live countdown to next refresh in the standard theme
 - 💀 Skeleton loading state on first load
 - 🚫 No page flicker on refresh — only the departure list is updated, not the whole card
+- Compact mode for dense dashboards
+- Optional footer, max-time window, and real-time-only filtering
+- Last-known-good departures are kept on transient API errors
+- Editor caches the stop list and static route index locally for faster reopening
 
 ---
 
 ## Screenshots
 
-> Add screenshots here after first install.
+### Standard
+
+![Standard card showing live departures for Warneńska 02](docs/images/card-standard.png)
+
+### Compact
+
+![Compact card preset showing a denser departure list](docs/images/card-compact.png)
+
+### E-ink
+
+![E-ink card preset with monochrome styling](docs/images/card-eink.png)
+
+### Visual Editor
+
+![Visual editor with stop picker, route chips, and display presets](docs/images/config-editor.png)
 
 ---
 
@@ -86,11 +106,16 @@ stop_id: "1327"
 type: custom:ztm-gdansk-card
 stop_id: "1327"
 title: Autobusy spod domu
+display_preset: standard
 max_departures: 10
 refresh_interval: 30
 show_delays: true
 hide_terminus: true
 highlight_mode: false
+e_ink_refresh_interval: 300
+max_minutes_ahead: 0
+show_footer: true
+realtime_only: false
 filter_routes:
   - "110"
   - "148"
@@ -103,12 +128,19 @@ filter_routes:
 |---|---|---|---|
 | `stop_id` | string | **required** | TRISTAR stop ID |
 | `title` | string | stop name from API | Custom card title |
+| `display_preset` | string | `standard` | Card layout: `standard`, `compact`, or `e_ink` |
 | `max_departures` | number | `10` | Number of departures shown (3–20) |
-| `refresh_interval` | number | `30` | Auto-refresh in seconds (min 15) |
+| `refresh_interval` | number | `30` | Auto-refresh in seconds (15–300) |
+| `e_ink_refresh_interval` | number | `300` | Auto-refresh in seconds when `display_preset: e_ink` is enabled (60–3600) |
+| `max_minutes_ahead` | number | `0` | Hide departures later than this many minutes ahead. `0` disables the limit |
 | `show_delays` | boolean | `true` | Show delay/early arrival badges |
 | `hide_terminus` | boolean | `true` | Hide buses finishing their run at this stop |
 | `highlight_mode` | boolean | `false` | When using `filter_routes`: dim other lines instead of hiding them |
+| `show_footer` | boolean | `true` | Show or hide the footer |
+| `realtime_only` | boolean | `false` | Show only departures with `status: REALTIME` |
 | `filter_routes` | list | _(all lines)_ | Only show (or highlight) these route IDs |
+
+`compact_mode`, `e_ink_mode`, and `hide_scheduled` are still accepted for older YAML configs. New configs should use `display_preset` and `realtime_only`.
 
 ---
 
@@ -124,6 +156,70 @@ The card uses the `status` field from the TRISTAR API to determine whether a dep
 This mirrors the behaviour of the official TRISTAR departure boards.
 
 Delay badges appear only for real-time departures and only when the deviation is ≥ 1 minute. Positive values mean late, negative values mean early.
+
+---
+
+## Route Chips
+
+The visual editor loads route chips from the static ZTM timetable (`stopsintrip.json` + `routes.json`), so it can show all lines assigned to the selected stop. If the static timetable cannot be loaded, the editor falls back to the live `departures` endpoint; in that case the chip list can be incomplete because it only contains currently upcoming departures.
+
+---
+
+## Data freshness
+
+If a refresh fails after the card already has valid data, the card keeps showing the last successful departures and displays a small warning. This avoids replacing a working board with an empty error state during short API or network interruptions.
+
+The editor also stores the stop list and route index in browser `localStorage` for 24 hours. Live departures are not cached.
+
+---
+
+## E-ink Mode
+
+When `display_preset: e_ink` is enabled, the card uses a monochrome high-contrast layout, removes animated loading shimmer, hides the live minute countdown and dynamic "refreshed / next refresh" footer text, stops the 1-second countdown timer, and uses `e_ink_refresh_interval` instead of `refresh_interval`.
+
+---
+
+## Recommended configs
+
+Standard dashboard:
+
+```yaml
+type: custom:ztm-gdansk-card
+stop_id: "14945"
+display_preset: standard
+max_departures: 8
+```
+
+Compact mobile card:
+
+```yaml
+type: custom:ztm-gdansk-card
+stop_id: "14946"
+display_preset: compact
+max_departures: 6
+```
+
+E-ink screen:
+
+```yaml
+type: custom:ztm-gdansk-card
+stop_id: "14945"
+display_preset: e_ink
+e_ink_refresh_interval: 300
+show_footer: true
+```
+
+---
+
+## Local development
+
+The repository includes a small local harness that runs the real editor and preview card without Home Assistant:
+
+```bash
+node dev/server.cjs 8123
+```
+
+Then open `http://127.0.0.1:8123/dev/`. The harness uses the live TRISTAR API and does not mock departures.
 
 ---
 

@@ -14,9 +14,14 @@ stop_id: "1327"
 type: custom:ztm-gdansk-card
 stop_id: "1327"
 title: Autobusy spod domu
+display_preset: standard
 max_departures: 10
 refresh_interval: 30
 show_delays: true
+e_ink_refresh_interval: 300
+max_minutes_ahead: 0
+show_footer: true
+realtime_only: false
 
 ---
 
@@ -29,6 +34,7 @@ title: Moje linie
 max_departures: 8
 refresh_interval: 45
 show_delays: true
+max_minutes_ahead: 60
 filter_routes:
   - "110"
   - "148"
@@ -64,6 +70,7 @@ stop_id: "3417"
 title: Tramwaje – Wrzeszcz
 max_departures: 8
 refresh_interval: 20
+display_preset: compact
 filter_routes:
   - "9"
   - "12"

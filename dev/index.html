@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZTM Gdańsk Card - lokalny edytor</title>
+  <style>
+    :root {
+      --primary-text-color: #111827;
+      --secondary-text-color: #6b7280;
+      --divider-color: #e5e7eb;
+      --card-background-color: #fff;
+      color: var(--primary-text-color);
+      background: #f3f4f6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(320px, 520px);
+      gap: 24px;
+      align-items: start;
+      justify-content: center;
+      padding: 32px;
+    }
+
+    .panel,
+    .preview-panel,
+    ha-card {
+      display: block;
+      background: var(--card-background-color);
+      border: 1px solid var(--divider-color);
+      border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+    }
+
+    .panel,
+    .preview-panel {
+      padding: 18px;
+    }
+
+    h1,
+    h2 {
+      font-size: 18px;
+      line-height: 1.25;
+      margin: 0 0 16px;
+    }
+
+    h2 {
+      font-size: 14px;
+      color: var(--secondary-text-color);
+      text-transform: uppercase;
+    }
+
+    .note {
+      color: var(--secondary-text-color);
+      font-size: 12px;
+      line-height: 1.45;
+      margin: 14px 0 0;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 14px;
+    }
+
+    button {
+      border: 1px solid var(--divider-color);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--primary-text-color);
+      cursor: pointer;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      min-height: 34px;
+      padding: 7px 10px;
+    }
+
+    button:hover {
+      border-color: #da2128;
+      color: #da2128;
+    }
+
+    .config-json {
+      margin-top: 16px;
+      background: #111827;
+      color: #e5e7eb;
+      border-radius: 6px;
+      font: 12px/1.5 Consolas, "Courier New", monospace;
+      max-height: 220px;
+      overflow: auto;
+      padding: 12px;
+      white-space: pre-wrap;
+    }
+
+    ztm-gdansk-card-editor {
+      display: block;
+    }
+
+    #card-host {
+      width: min(100%, 520px);
+    }
+
+    @media (max-width: 900px) {
+      body {
+        grid-template-columns: 1fr;
+        padding: 16px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <section class="panel">
+    <h1>Rzeczywisty edytor konfiguracji</h1>
+    <div class="toolbar">
+      <button id="reset-config" type="button">Reset konfiguracji</button>
+    </div>
+    <div id="editor-host"></div>
+    <p class="note">Ten panel używa prawdziwego elementu <code>ztm-gdansk-card-editor</code> i live API TRISTAR.</p>
+    <pre class="config-json" id="config-json"></pre>
+  </section>
+
+  <section class="preview-panel">
+    <h2>Podgląd karty</h2>
+    <main id="card-host"></main>
+    <p class="note">Uruchom z katalogu repozytorium: <code>node dev/server.cjs 8123</code></p>
+  </section>
+
+  <script type="module">
+    const editorHost = document.getElementById("editor-host");
+    const cardHost = document.getElementById("card-host");
+    const configJson = document.getElementById("config-json");
+    const resetConfig = document.getElementById("reset-config");
+
+    let editor;
+    let card;
+    const defaultConfig = {
+      type: "custom:ztm-gdansk-card",
+      display_preset: "standard",
+      max_departures: 8,
+      refresh_interval: 30,
+      e_ink_refresh_interval: 300,
+      max_minutes_ahead: 0,
+      show_delays: true,
+      hide_terminus: true,
+      highlight_mode: false,
+      show_footer: true,
+      realtime_only: false,
+    };
+    let currentConfig = { ...defaultConfig };
+
+    await import("../ztm-gdansk-card.js");
+
+    function renderConfigJson() {
+      configJson.textContent = JSON.stringify(currentConfig, null, 2);
+    }
+
+    function renderCard() {
+      if (card) card.remove();
+      card = document.createElement("ztm-gdansk-card");
+      card.setConfig(currentConfig);
+      cardHost.append(card);
+      renderConfigJson();
+    }
+
+    function renderEditor() {
+      if (editor) editor.remove();
+      editor = document.createElement("ztm-gdansk-card-editor");
+      editor.setConfig(currentConfig);
+      editor.addEventListener("config-changed", event => {
+        currentConfig = event.detail.config;
+        renderCard();
+      });
+      editorHost.append(editor);
+    }
+
+    resetConfig.addEventListener("click", () => {
+      currentConfig = { ...defaultConfig };
+      renderEditor();
+      renderCard();
+    });
+
+    renderEditor();
+    renderCard();
+  </script>
+</body>
+</html>

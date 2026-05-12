@@ -1814,9 +1814,7 @@ class ZtmGdanskCard extends HTMLElement {
       let timeColHTML = '';
       if (isRealtime) {
         const delayPart = showDelay ? ` • <span class="delay-badge ${isLate ? 'late' : 'early'}">${isLate ? '+' : ''}${delayMin} min</span>` : '';
-        timeColHTML = c.e_ink_mode
-          ? `<div class="time-main${imminent ? ' imminent' : ''}">${formatHHMM(d.estimatedTime)}</div>`
-          : `<div class="time-main${imminent ? ' imminent' : ''}">${formatHHMM(d.estimatedTime)}</div><div class="time-sub"><span class="dot">●</span> ${formatMins(mins)}${delayPart}</div>`;
+        timeColHTML = `<div class="time-main${imminent ? ' imminent' : ''}">${formatHHMM(d.estimatedTime)}</div><div class="time-sub"><span class="dot">●</span> ${formatMins(mins)}${delayPart}</div>`;
       } else {
         timeColHTML = `<div class="time-main">${formatHHMM(d.theoreticalTime)}</div>`;
       }
